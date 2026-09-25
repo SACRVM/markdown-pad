@@ -1,0 +1,19 @@
+/* Scoped to the app's own element — never :root, or the app would repaint the
+   desktop around it. Tokens only: the host's theme flows in, and one --accent
+   seed re-derives the whole accent family if you want an identity of your own. */
+app-my-app {
+    /* Uncomment for your own accent; delete to wear the host's.
+       --accent: #7c3aed; */
+
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    height: 100%;
+}
+
+app-my-app h2 { font-size: 1.1rem; }
+app-my-app .lead { margin: 0; color: var(--text-muted); }
+app-my-app .readout { margin: 0; color: var(--text-muted); font-size: 0.85rem; }
+/* Pinned to the bottom: on a phone the window opens maximized, and the
+   bottom of the screen is where a thumb already is. */
+app-my-app .act { margin-top: auto; }
