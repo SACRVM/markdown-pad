@@ -12,7 +12,7 @@
          property. A custom theme updates them together with its seeds. -->
     <meta name="theme-color" content="#0b0f1a" media="(prefers-color-scheme: dark)">
     <meta name="theme-color" content="#eef2f7" media="(prefers-color-scheme: light)">
-    <title>My App</title>
+    <title>Markdown Pad</title>
 
     <!-- The harness: your app alone, no desktop, F5 to develop.
          The app vendors its own kit/ (autark: local, offline, kit/VERSION
@@ -40,15 +40,15 @@
         /* Harness only — not part of the app. */
         body { padding: clamp(1rem, 5vw, 2rem); }
         .harness-bar {
-            max-width: 420px;
+            max-width: 860px;
             display: flex;
             justify-content: flex-end;
             gap: 0.5rem;
             margin-bottom: 0.75rem;
         }
         .frame {
-            max-width: 420px;
-            min-height: 360px;
+            max-width: 860px;
+            height: 640px;
             padding: 1rem;
             display: flex;
             background: var(--panel);
@@ -65,8 +65,8 @@
         @media (max-width: 768px), (max-height: 480px) and (pointer: coarse) {
             body {
                 padding: 0;
-                min-height: 100vh;
-                min-height: 100dvh;
+                height: 100vh;
+                height: 100dvh;
                 display: flex;
                 flex-direction: column;
             }
@@ -80,6 +80,7 @@
                 flex: 1;
                 max-width: none;
                 min-height: 0;
+                height: auto;
                 padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
                 border: none;
                 border-radius: 0;
@@ -97,7 +98,7 @@
     </div>
     <!-- Roughly the box a <sac-window> would give it on a desktop. With no
          host calling mount(), sac.app.Element mounts the app itself.
-         A fullscreen app drops the frame: <app-my-app> straight in <body>. -->
-    <div class="frame"><app-my-app></app-my-app></div>
+         A fullscreen app drops the frame: <app-markdown-pad> straight in <body>. -->
+    <div class="frame"><app-markdown-pad></app-markdown-pad></div>
 </body>
 </html>

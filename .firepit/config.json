@@ -1,6 +1,6 @@
 {
   "commands": [
-    { "name": "GitHub", "type": "url", "url": "https://github.com/SACRVM/sacrvm-app-template", "icon": "🐙" }
+    { "name": "GitHub", "type": "url", "url": "https://github.com/SACRVM/markdown-pad", "icon": "🐙" }
   ],
   // Firepit per-project config — see docs/ARCHITECTURE.md §9 for the schema.
   // JSONC: comments and trailing commas are allowed.
@@ -9,7 +9,7 @@
   // banner when that happens).
 
   "version": 1,
-  "id": "sacrvm-app-template",
+  "id": "markdown-pad",
 
   // Toolbar URL buttons. {projectName} and {projectPath} are substituted.
   // "quickLinks": [

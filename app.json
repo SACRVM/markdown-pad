@@ -1,12 +1,27 @@
 {
-    "id": "my-app",
-    "name": "My App",
-    "icon": "shapes",
-    "description": "One sentence about what it does — a desktop shows this on the tile.",
+    "id": "markdown-pad",
+    "name": "Markdown Pad",
+    "icon": "document",
+    "accent": "#6366f1",
+    "description": "Open, write and save Markdown files — live preview while you type, no mode switch.",
     "kind": "window",
-    "tag": "app-my-app",
+    "tag": "app-markdown-pad",
     "entry": "app.js",
     "version": "1.0.0",
-    "width": "420px",
-    "height": "360px"
+    "width": "860px",
+    "height": "640px",
+    "notices": [
+        {
+            "title": "Editor",
+            "text": "<sac-md-editor> from SACRVM/sac-md-editor — MIT. Vendored unchanged in vendor/."
+        },
+        {
+            "title": "marked",
+            "text": "marked 15.0.12 — Copyright (c) 2011-2025, Christopher Jeffrey. MIT licensed. Loaded from the vendored kit."
+        },
+        {
+            "title": "DOMPurify",
+            "text": "DOMPurify 3.2.0 — (c) Cure53 and other contributors. Apache License 2.0 and Mozilla Public License 2.0. Loaded from the vendored kit."
+        }
+    ]
 }

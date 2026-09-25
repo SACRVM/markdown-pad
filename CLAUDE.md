@@ -4,11 +4,38 @@ Guidance for Claude Code (and any other agent) working in this repository.
 
 ## What this is
 
-One app built on [SACRVM APPKIT](https://github.com/SACRVM/sacrvm-appkit).
+**Markdown Pad** — a Markdown file editor, installable on any SACRVM desktop
+(a `window` app). Built on [SACRVM APPKIT](https://github.com/SACRVM/sacrvm-appkit)
+and on the `<sac-md-editor>` add-on from
+[SACRVM/sac-md-editor](https://github.com/SACRVM/sac-md-editor).
+
 **One repo, one app** — the repo *is* the app: `app.json` (the manifest a
 desktop reads), `app.js` (one custom element, one classic script), `app.css`,
-and `index.html` as a standalone harness. Read `README.md` before changing the
-shape of any of them.
+and `index.html` as a standalone harness.
+
+The split of work: `<sac-md-editor>` owns the editing surface (live preview,
+formatting toolbar, undo/redo, list continuation). `app.js` owns everything
+about a *file* — New / Open / Save / Save as through `context.files`, the
+unsaved-work flag (`context.setDirty`), the crash-safe draft in `context.fs`
+(one entry, `draft`, removed once the file is saved), drag and drop, CRLF/BOM
+handling and the word count. A feature that changes how text is edited or
+rendered belongs in sac-md-editor, not here.
+
+## Vendored editor
+
+`vendor/sac-md-editor.js` is a verbatim copy of `js/sac-md-editor.js` from
+SACRVM/sac-md-editor — never edit it here; fix it upstream and copy it again.
+It is the one sanctioned exception to "one custom element per repo": a
+vendored dependency, like the kit's own components, not a second app.
+`app.js` loads it (and the kit's vendored marked + DOMPurify, which `all.js`
+does not load) against `sac.app.base()`, once, guarded by
+`customElements.get` — the file declares top-level classes and would throw if
+loaded twice.
+
+The editor still fires native `input` and an undocumented `history-change`
+event (`detail: { canUndo, canRedo }`) and has public `undo()` / `redo()`.
+When sac-md-editor moves to the kit's `sac:input` / `sac:change` events
+(its roadmap item 2), the listeners in `app.js` must follow.
 
 ## Non-negotiable
 
@@ -49,7 +76,7 @@ At the start of a session, read any pending messages in `.firepit/inbox/*.md` �
 
 ## Firepit knowledge
 
-Before researching something that may already be known, query the knowledge base with the `firepit_knowledge_search` MCP tool (scope `both` covers this project plus the global base). Save durable findings with `firepit_knowledge_add` — written in English, per the indexing convention. The created markdown files live under `.firepit/knowledge/` and are committed like any other file.
+Before researching something that may already be known, query the knowledge base with the `firepit_knowledge_search` MCP tool (scope `both` covers this project plus the global base). Save durable findings with `firepit_knowledge_add` — written in English, per the indexing convention. **This is a public repo, so `.firepit/knowledge` is a pointer file into the private central store** — the docs live there, never in this tree.
 
 ## Firepit pinned knowledge
 
