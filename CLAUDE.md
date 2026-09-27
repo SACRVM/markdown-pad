@@ -23,8 +23,12 @@ rendered belongs in sac-md-editor, not here.
 
 ## Vendored editor
 
-`vendor/sac-md-editor.js` is a verbatim copy of `js/sac-md-editor.js` from
-SACRVM/sac-md-editor — never edit it here; fix it upstream and copy it again.
+`vendor/sac-md-editor.js` and `vendor/sac-md-secret.js` are verbatim copies
+of `js/sac-md-editor.js` and `js/sac-md-secret.js` from SACRVM/sac-md-editor —
+never edit them here; fix upstream and copy both again. The second file is
+the `:::secret` block registration (the editor has none built in);
+`app.js` loads it after the editor unless the page registered `secret`
+already.
 It is the one sanctioned exception to "one custom element per repo": a
 vendored dependency, like the kit's own components, not a second app.
 `app.js` loads it (and the kit's vendored marked + DOMPurify, which `all.js`

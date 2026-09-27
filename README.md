@@ -74,10 +74,11 @@ app:
 | `app.js` | `<app-markdown-pad>`: the file handling around the editor |
 | `app.css` | Its styles, scoped to the element |
 | `vendor/sac-md-editor.js` | The editor, copied unchanged from [sac-md-editor](https://github.com/SACRVM/sac-md-editor) |
+| `vendor/sac-md-secret.js` | Its `:::secret` block registration, copied unchanged from the same repo |
 | `kit/` | [SACRVM APPKIT](https://github.com/SACRVM/sacrvm-appkit), copied unchanged from the release (`kit/VERSION`). The editor's markdown parser and sanitiser load from `kit/js/vendor/` |
 
-To upgrade the editor, copy `js/sac-md-editor.js` from sac-md-editor over
-`vendor/sac-md-editor.js`. To upgrade the kit, delete `kit/` and unzip the
+To upgrade the editor, copy `js/sac-md-editor.js` and `js/sac-md-secret.js`
+from sac-md-editor over the two files in `vendor/`. To upgrade the kit, delete `kit/` and unzip the
 next release in its place. Never edit either copy here.
 
 ## License

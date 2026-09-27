@@ -15,9 +15,10 @@
  *                  crash brings it back; it is not a second copy of saved work.
  *
  * Dependencies: marked + DOMPurify come from this repo's vendored kit
- * (kit/js/vendor/ — the kit's all.js does not load them), the editor from
- * vendor/. All three load once, resolved against this script's folder, so
- * the same code runs standalone and injected into a desktop.
+ * (kit/js/vendor/ — the kit's all.js does not load them), the editor and
+ * its :::secret block registration from vendor/. Each loads once, resolved
+ * against this script's folder, so the same code runs standalone and
+ * injected into a desktop.
  *
  * Keyboard (while focus is inside the app): Ctrl/Cmd+S save,
  * Ctrl/Cmd+Shift+S save as, Ctrl/Cmd+O open. Undo/redo and formatting keys
@@ -101,6 +102,13 @@
                 ]);
                 if (!customElements.get("sac-md-editor")) await script(BASE + "vendor/sac-md-editor.js");
                 await customElements.whenDefined("sac-md-editor");
+                // :::secret is a block registration, not built into the
+                // editor - load it unless the page registered it already.
+                // An older editor on the page has no registry: skip.
+                const Editor = customElements.get("sac-md-editor");
+                if (Array.isArray(Editor.blocks) && !Editor.blocks.includes("secret")) {
+                    await script(BASE + "vendor/sac-md-secret.js");
+                }
             })();
             depsPromise.catch(() => { depsPromise = null; });   // a retry may work
         }
