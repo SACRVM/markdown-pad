@@ -110,8 +110,17 @@
 
     /* ----------------------------------------------------- helpers -- */
 
+    // Markdown syntax is not prose. Per line, drop the block prefix (quote
+    // >, heading #, list marker incl. 1. / 1), task box), then count only
+    // tokens holding a letter or digit - so table pipes, --- rules, fences
+    // and a lone * add nothing, while **bold** still counts as one word.
+    const BLOCK_PREFIX = /^\s*(?:>\s*)*(?:#{1,6}\s+|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/;
     function stats(text) {
-        const words = (text.match(/\S+/g) || []).length;
+        let words = 0;
+        for (const line of text.split("\n")) {
+            const tokens = line.replace(BLOCK_PREFIX, "").match(/\S+/g) || [];
+            words += tokens.filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+        }
         return { words, chars: text.length, lines: text === "" ? 1 : text.split("\n").length };
     }
 
