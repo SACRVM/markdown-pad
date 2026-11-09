@@ -51,7 +51,9 @@
             height: 640px;
             padding: 1rem;
             display: flex;
-            background: var(--panel);
+            /* The ground a <sac-window>'s content sits on (kit 2.35), so
+               muted text and chips read here as they will on a desktop. */
+            background: var(--window-ground);
             border: 1px solid var(--border);
             border-radius: var(--radius-l);
         }
