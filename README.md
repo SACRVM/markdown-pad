@@ -42,10 +42,12 @@ or pick **Markdown Pad** in the App Store tab.
 | Ctrl/Cmd+S | Save |
 | Ctrl/Cmd+Shift+S | Save as… |
 | Ctrl/Cmd+O | Open… |
-| Ctrl/Cmd+Z / Ctrl/Cmd+Y | Undo / redo |
+| Ctrl/Cmd+Z / Ctrl/Cmd+Y | Undo / redo, a word at a time |
 | Ctrl/Cmd+B / I / K | Bold / italic / link |
 | Enter | Continues a list; Enter on an empty item ends it |
-| Tab | Two-space indent |
+| Alt+Enter | Follows the link at the caret |
+| Tab / Shift+Tab | In a list item: indent / outdent. In code: two spaces. In a table: next / previous cell. Anywhere else Tab moves the focus on, like in any field |
+| Esc, then Tab | Leaves the editor from anywhere |
 
 The file shortcuts only apply while the Markdown Pad window has focus, so
 two open windows never react to the same key.

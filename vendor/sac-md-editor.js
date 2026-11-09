@@ -22,9 +22,22 @@
  * Attributes:
  *   placeholder - shown when the document is empty.
  *   readonly    - disables editing and hides the formatting toolbar.
+ *   bare        - for an editor that IS the pane (a notes app): no frame,
+ *                 radius, background or focus ring, and the writing surface
+ *                 fills the host's height (give the host one: a height, or
+ *                 flex: 1 in a column) instead of the 60vh minimum. A click
+ *                 in the empty area below the text puts the caret at the end.
+ *                 Without a host height the surface is as tall as its text.
+ *   links       - "host": relative hrefs (../decisions/0003.md#why,
+ *                 notes/a.md) are links in this editor, for the host to
+ *                 open through sac:link. Without it they render as links
+ *                 that go nowhere, like every href the editor does not
+ *                 allow (see Links below).
  *
  * Properties:
- *   value - string; markdown source (getter + setter).
+ *   value - string; markdown source (getter + setter). Lossless: after
+ *           `el.value = s`, `el.value === s` - only line endings are
+ *           normalised, \r\n and a lone \r read back as \n.
  *
  * Events - the kit convention (CustomEvent, detail { value }, bubbles, NOT
  * composed; never fired by a programmatic `value` set):
@@ -36,9 +49,33 @@
  *   input  - native Event after every edit (may arrive more than once per
  *            keystroke: the browser's own plus the editor's).
  *   change - native Event when focus leaves after an edit.
+ * Action event - the kit convention for those (CustomEvent, bubbles,
+ * composed, cancelable, like sac-split's sac:split-back):
+ *   sac:link   - a link is followed: a click in read-only, Ctrl/Cmd+click
+ *                while editing (the caret line included - its source is
+ *                looked up under the pointer), Alt+Enter or the "Open"
+ *                button that shows under the caret while it is in a link
+ *                (the way in on touch). detail { href, text, raw,
+ *                line }: href as written (a reference link's resolved;
+ *                a relative one unresolved), the text shown, the link's
+ *                whole source, the 0-based line index. preventDefault()
+ *                keeps the editor from opening it; otherwise a web link
+ *                (http(s), mailto, #) opens in a new tab as always and a
+ *                host link (linkSchemes, links="host") goes nowhere.
  *
  * Methods:
  *   focus() - focus the editor surface.
+ *   undo(), redo() - one step back / forward in the editor's history.
+ *   canUndo(), canRedo() - whether there is a step to take.
+ *
+ * Undo history: a step is a word (typing up to and including a space), a
+ * run of typing ended by a pause of half a second, or one structural edit
+ * (Enter, paste, a toolbar action, Tab, a table edit). Ctrl/Cmd+Z, Ctrl+Y,
+ * Ctrl/Cmd+Shift+Z and the browser's own Undo / Redo (Edit menu, a phone's
+ * shake or three-finger swipe) all go through it. The editor has no undo
+ * buttons of its own; a host shows them from this event:
+ *   history-change - CustomEvent, bubbles, composed; detail { canUndo,
+ *                    canRedo }, whenever either may have changed.
  *
  * Language:
  *   The editor's own strings (toolbar labels and tooltips, the reveal
@@ -55,7 +92,27 @@
  *                                          lists with the same marker
  *   Enter on empty list item               exits the list
  *   Backspace at start of non-first line   merge with previous line
- *   Tab                                    two-space soft tab
+ *   Alt+Enter                              follow the link at the caret
+ *                                          (as Ctrl/Cmd+click does)
+ *   Tab / Shift+Tab                        in a list item: indent / outdent
+ *                                          it (nests under the item above);
+ *                                          in code: two spaces at the caret /
+ *                                          outdent; over a selection of such
+ *                                          lines: every line. Anywhere else
+ *                                          Tab moves the focus on, like in
+ *                                          any field - the editor is no trap.
+ *   Esc, then Tab / Shift+Tab              leaves the editor from anywhere
+ *                                          (Esc itself still reaches the host)
+ *
+ * Toolbar: one tab stop (role="toolbar"); Left / Right / Home / End move
+ * between its buttons. A button pressed from the keyboard acts where the
+ * caret was and hands the focus back to the text.
+ *
+ * Accessibility: the writing surface is a multi-line textbox named by the
+ * host's aria-label (else "Markdown text"), with the placeholder as
+ * aria-placeholder. In read-only mode a masked block's eye is a focusable
+ * toggle button (Enter / Space, aria-pressed). A task's box toggles [ ] /
+ * [x] on a click or tap while editing (not in read-only).
  *
  * Tables (GFM pipe tables): rendered as a real grid on inactive lines, raw
  * source on the caret line. The toolbar's Table button inserts a 2-column
@@ -112,6 +169,54 @@
  * :::secret is not built in: js/sac-md-secret.js registers it (load it
  * after this file). The demo does, and so does any host that wants it.
  *
+ * Links: an href is a link the editor follows when it is http(s), mailto
+ * or a #fragment ("web"), or when the host allows it ("host"):
+ *
+ *   Editor.linkSchemes = ["note:", "wiki:"];  // page-wide; javascript:,
+ *                                             // data:, vbscript:, file:,
+ *                                             // blob: are refused
+ *   <sac-md-editor links="host">              // relative hrefs, per editor
+ *
+ * Any other href keeps the look of a link but gets no href: a click goes
+ * nowhere (it used to open a blank tab at #).
+ *
+ * Strikethrough: GFM by default - ~x~ and ~~x~~ both strike. Page-wide, on
+ * the element class:
+ *
+ *   Editor.strikethrough = "double";         // only ~~x~~ strikes; a lone ~
+ *                                            // ("about": ~40 EUR) is text
+ *   Editor.strikethrough                     // "gfm" (default) or "double"
+ *
+ * Either way the source keeps its tildes; setting it re-renders every
+ * editor on the page.
+ *
+ * Inline links (registry), the inline twin of registerBlock - a host link
+ * form inside a line, page-wide on the element class:
+ *
+ *   const off = Editor.registerInline({
+ *       name:   "wikilink",                   // a-z 0-9 -, unique
+ *       match:  /\[\[([^\[\]\n|]+?)(?:\|([^\[\]\n]+?))?\]\]/,
+ *       render: (m) => ({ text: m[2] || m[1], href: `wiki:${m[1]}`,
+ *                         title: m[1], className: "" }),   // or null: no link
+ *       css:    "a.inline-wikilink { text-decoration-style: dotted; }",
+ *   });
+ *   off();                                   // or Editor.unregisterInline(name)
+ *   Editor.inlines                           // registered names
+ *
+ * match is tried at every position of a line's inline text (as if
+ * sticky - flags g / y / d are the editor's business); render(m) gets that
+ * match (m.input is the text from that position on). The source stays the
+ * line's textContent: the shown text - the (highest-numbered) capture group
+ * equal to it, else its first occurrence in the match - becomes the
+ * anchor, the rest of the
+ * match its hidden markers. Shown text that is not in the source at all (a
+ * title for an id) is generated content over the hidden source. Inlines
+ * are not recognised in code spans, fences, indented code or inside a
+ * link's text; the href goes through the same gate as any link, so a host
+ * scheme needs linkSchemes. The anchor carries .inline-<name> plus
+ * className, and `css` is injected like a block's. A throwing render counts
+ * as no match. Registering re-renders every editor on the page.
+ *
  * SECURITY: masking is a purely VISUAL layer. The plaintext stays in the DOM
  * and in whatever the host saves from `value`. The blur is a courtesy
  * against shoulder-surfing, never a security boundary - a host that needs
@@ -124,6 +229,29 @@
  *   DOMPurify  - HTML sanitiser. Second line of defence behind our own
  *                escape-don't-parse policy for inline HTML.
  */
+
+// Undo history: which input types are typing (they coalesce into one step,
+// see _recordHistory) and how long a pause closes a step. A second, not
+// half: the slow typist's keystrokes are a word, not a step each.
+const TYPING_KIND = new Map([
+    ["insertText", "insert"], ["insertCompositionText", "insert"],
+    ["deleteContentBackward", "delete"], ["deleteContentForward", "delete"],
+]);
+const HISTORY_PAUSE_MS = 1000;
+
+// Keys that only modify another (the Shift of Shift+Tab).
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
+
+/** Columns of leading whitespace; a tab goes to the next multiple of 4. */
+function indentCols(s) {
+    let n = 0;
+    for (const c of s) {
+        if (c === " ") n++;
+        else if (c === "\t") n += 4 - (n % 4);
+        else break;
+    }
+    return n;
+}
 
 // Reveal-toggle SVG: open eye with a diagonal slash that's hidden by default
 // and surfaced via CSS when the block carries .block-revealed. One-line so
@@ -166,8 +294,17 @@ function mdAddStrings() {
         "md-editor.olLabel":     "1. Liste",
         "md-editor.quote":       "Zitat",
         "md-editor.quoteLabel":  "Zitat",
-        "md-editor.hr":          "Trennlinie",
+        "md-editor.hr":          "Trennlinie einf\u00fcgen",
         "md-editor.hrLabel":     "Linie",
+        "md-editor.boldText":    "fetter Text",
+        "md-editor.italicText":  "kursiv",
+        "md-editor.strikeText":  "durchgestrichen",
+        "md-editor.codeText":    "Code",
+        "md-editor.toolbar":     "Formatierung",
+        "md-editor.surface":     "Markdown-Text",
+        "md-editor.tabHint":     "Tab r\u00fcckt Listenpunkte und Code ein. Zum Verlassen Esc dr\u00fccken, dann Tab.",
+        "md-editor.openLink":    "\u00d6ffnen",
+        "md-editor.openLinkTip": "Link \u00f6ffnen (Alt+Eingabe)",
         "md-editor.tableLabel":  "Tabelle",
         "md-editor.tableColumn": "Spalte",
         "md-editor.table":       "Tabelle einf\u00fcgen oder bearbeiten",
@@ -210,12 +347,31 @@ const MD_TOOLBAR_TEXT = {
     ul:     ["ul",     "Bullet list",     "ulLabel",    "List"],
     ol:     ["ol",     "Numbered list",   "olLabel",    "1. List"],
     quote:  ["quote",  "Blockquote",      "quoteLabel", "Quote"],
-    hr:     ["hr",     "Horizontal rule", "hrLabel",    "HR"],
+    hr:     ["hr",     "Insert a divider line", "hrLabel", "Divider"],
     table:  ["table",  "Insert a table, or edit the one at the caret", "tableLabel", "Table"],
 };
 
+// Press state by hand (kit 2.33: feedback on pointer-down). The toolbar and
+// the reveal eye cancel their mousedown to keep the caret where it is, and
+// Firefox gives a cancelled press no :active - so .pressed carries it, from
+// pointer-down until the pointer is let go anywhere.
+function trackPress(root, selector) {
+    root.addEventListener("pointerdown", (e) => {
+        const el = e.target.closest?.(selector);
+        if (!el) return;
+        el.classList.add("pressed");
+        const up = () => {
+            el.classList.remove("pressed");
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+        };
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", up);
+    });
+}
+
 class SacMdEditor extends HTMLElement {
-    static observedAttributes = ["placeholder", "readonly"];
+    static observedAttributes = ["placeholder", "readonly", "links", "aria-label"];
 
     constructor() {
         super();
@@ -225,16 +381,26 @@ class SacMdEditor extends HTMLElement {
         this._onDocSelect = null;
         this._suppressSelect = false;
         // Undo/redo. Snapshots are { value, lineIdx, offset } so caret position
-        // restores too, not just text. Keystrokes are coalesced via debounced
-        // scheduling (_historyTimer) - a one-shot burst of typing becomes one
-        // undo step, not one step per character. Capped at 200 entries so a
-        // long editing session doesn't balloon memory. _suppressHistory is set
+        // restores too, not just text. Typing is coalesced: the state after
+        // the latest keystroke waits in _pendingEntry and goes onto the stack
+        // when a word ends, typing pauses (_historyTimer), typing turns from
+        // inserting to deleting, the caret leaves the line, or any other edit
+        // comes - see _recordHistory. Capped at 1000 entries so a long
+        // editing session doesn't balloon memory. _suppressHistory is set
         // while replaying a snapshot to stop the replay itself from pushing a
         // new history entry (which would truncate the redo stack).
         this._history         = [];
         this._historyIdx      = -1;
         this._historyTimer    = null;
+        this._pendingEntry    = null;
+        this._pendingKind     = "";
         this._suppressHistory = false;
+        // Set by Esc (outside a table): the next Tab leaves the editor.
+        this._tabReleased     = false;
+        // Where the caret was when the focus left: { a, ao, b, bo } line
+        // indices and offsets. A toolbar button pressed from the keyboard
+        // acts there.
+        this._lastSel         = null;
     }
 
     // Block registry - see the header. Static: blocks are a page-wide
@@ -254,6 +420,38 @@ class SacMdEditor extends HTMLElement {
         if (BLOCKS.delete(name)) refreshBlocks();
     }
     static get blocks() { return [...BLOCKS.keys()]; }
+
+    // Inline registry and host link schemes - see the header. Page-wide too.
+    static registerInline(def) {
+        const inline = compileInline(def);
+        INLINES.delete(inline.name);         // re-registering replaces
+        INLINES.set(inline.name, inline);
+        refreshBlocks();
+        return () => {
+            if (INLINES.get(inline.name) !== inline) return;
+            INLINES.delete(inline.name);
+            refreshBlocks();
+        };
+    }
+    static unregisterInline(name) {
+        if (INLINES.delete(name)) refreshBlocks();
+    }
+    static get inlines() { return [...INLINES.keys()]; }
+    static get linkSchemes() { return [...linkSchemes]; }
+    static set linkSchemes(list) {
+        linkSchemes = compileSchemes(list);
+        purifyConfig = purifyConfigFor(linkSchemes);
+        refreshBlocks();
+    }
+    static get strikethrough() { return strikethrough; }
+    static set strikethrough(mode) {
+        if (mode !== "gfm" && mode !== "double") {
+            throw new TypeError(`sac-md-editor: strikethrough is "gfm" or "double", not ${JSON.stringify(mode)}`);
+        }
+        if (mode === strikethrough) return;
+        strikethrough = mode;
+        refreshBlocks();
+    }
 
     connectedCallback() {
         mdAddStrings();
@@ -278,6 +476,13 @@ class SacMdEditor extends HTMLElement {
         }
         if (this._offLang) { this._offLang(); this._offLang = null; }
         LIVE_EDITORS.delete(this);
+        // Removed with the table dialog open: no close event comes, and a
+        // pending _td would keep selectionchange shut out after a reconnect.
+        // Drop it like a Cancel.
+        if (this._td) {
+            this._td = null;
+            this._tdlg.close();
+        }
     }
 
     /** Kit value events: detail { value }, bubbles, not composed. */
@@ -327,6 +532,11 @@ class SacMdEditor extends HTMLElement {
             btn.setAttribute("aria-label", tip);
             if (spec[2]) btn.textContent = mdT(spec[2], spec[3]);
         });
+        this._toolbar.setAttribute("aria-label", mdT("toolbar", "Formatting"));
+        this._syncSurfaceAria();
+        this._kbdHint.textContent = mdT("tabHint", "Tab indents list items and code. To leave the editor, press Esc, then Tab.");
+        this._linkBtn.textContent = mdT("openLink", "Open");
+        this._linkBtn.title = mdT("openLinkTip", "Open link (Alt+Enter)");
         // Block pills are CSS generated content; a label may be a function
         // of the page language, so every pill is re-read here.
         this._editor.querySelectorAll(".line.block-open, .line.block-line").forEach((l) => {
@@ -367,11 +577,13 @@ class SacMdEditor extends HTMLElement {
      *  _history/_historyIdx - caller decides. */
     _applyValue(v) {
         if (!this.shadowRoot.firstChild) this._render();
-        const text = v == null ? "" : String(v);
+        const text = v == null ? "" : normalizeEol(String(v));
         const lines = text.split("\n");
         // Always at least one line - an empty document still needs a caret target.
         if (lines.length === 0) lines.push("");
         this._activeLine = null;
+        this._lastSel = null;          // its line indices meant the old text
+        this._syncLinkButton();
         // Plain lines first, then one sweep renders them all: a line's look
         // can depend on lines BELOW it (a setext underline, a link
         // definition), which a top-down build cannot see yet. Rendered while
@@ -399,18 +611,57 @@ class SacMdEditor extends HTMLElement {
         if (!this._editor) return;
         if (name === "placeholder") {
             this._editor.setAttribute("data-placeholder", newVal || "");
+            this._syncSurfaceAria();
         }
+        if (name === "aria-label") this._syncSurfaceAria();
         if (name === "readonly") {
             const ro = newVal !== null;
-            this._editor.setAttribute("contenteditable", ro ? "false" : "plaintext-only");
+            this._setEditable(!ro);
             this.classList.toggle("is-readonly", ro);
             if (ro) {
                 // Fully re-render so no line is left in "active" flat mode.
                 this._renderAllInactive();
                 this._activeLine = null;
+                this._syncLinkButton();
             }
             this._syncRevealHints();
+            this._syncSurfaceAria();
+            // The eye is a tab stop only in read-only, where nothing else
+            // reveals a block; while editing the caret line does.
+            for (const t of this._editor.querySelectorAll(".sac-reveal-toggle")) t.tabIndex = ro ? 0 : -1;
         }
+        // Which hrefs are links changed: every line renders again.
+        if (name === "links") this._refreshBlocks();
+    }
+
+    /** links="host": relative hrefs are links here, for the host to open. */
+    _hostLinks() { return this.getAttribute("links") === "host"; }
+
+    /** contenteditable and the kit's swipe opt-out travel together: a finger
+     *  dragging across text being edited never starts a <sac-split> back
+     *  swipe or a <sac-nav> drawer swipe. Kit 2.33.3 skips "plaintext-only"
+     *  by itself, but a host runs on the kit it vendors, and older ones miss
+     *  it; a read-only editor is just text, so the swipe may start there. */
+    _setEditable(on) {
+        this._editor.setAttribute("contenteditable", on ? "plaintext-only" : "false");
+        this._editor.toggleAttribute("data-no-swipe", on);
+    }
+
+    /** The writing surface's name and role. Editing, it is a multi-line
+     *  textbox named by the host's aria-label (else a generic name), its
+     *  placeholder the aria-placeholder, and the Tab / Esc hint its
+     *  description. Read-only, it is plain content - headings, links and
+     *  all - so the textbox semantics go. */
+    _syncSurfaceAria() {
+        const ed = this._editor;
+        if (!ed) return;
+        const set = (name, value) => value ? ed.setAttribute(name, value) : ed.removeAttribute(name);
+        const editing = !this.hasAttribute("readonly");
+        set("role", editing && "textbox");
+        set("aria-multiline", editing && "true");
+        set("aria-label", editing && (this.getAttribute("aria-label") || mdT("surface", "Markdown text")));
+        set("aria-placeholder", editing && this.getAttribute("placeholder"));
+        set("aria-describedby", editing && "kbd-hint");
     }
 
     // -----------------------------------------------------------------------
@@ -428,15 +679,14 @@ class SacMdEditor extends HTMLElement {
 
         this._editor     = this.shadowRoot.querySelector(".editor");
         this._toolbar    = this.shadowRoot.querySelector(".toolbar");
+        this._kbdHint    = this.shadowRoot.querySelector("#kbd-hint");
+        this._linkBtn    = this.shadowRoot.querySelector(".link-open-btn");
         this._placeholder = this.getAttribute("placeholder") || "";
         if (this._placeholder) this._editor.setAttribute("data-placeholder", this._placeholder);
 
-        if (this.hasAttribute("readonly")) {
-            this._editor.setAttribute("contenteditable", "false");
-            this.classList.add("is-readonly");
-        } else {
-            this._editor.setAttribute("contenteditable", "plaintext-only");
-        }
+        this._setEditable(!this.hasAttribute("readonly"));
+        if (this.hasAttribute("readonly")) this.classList.add("is-readonly");
+        this._syncSurfaceAria();
 
         // Seed with a single empty line so the caret has somewhere to go.
         this._editor.replaceChildren(this._buildRenderedLine("", freshState()));
@@ -450,9 +700,14 @@ class SacMdEditor extends HTMLElement {
             // Our own sac:input is a CustomEvent named differently, so this
             // only sees the native / synthetic "input" events.
             this._syncBlockState();
-            this._scheduleHistorySnapshot();
+            // Typing (the browser's own input, or the editor's re-dispatch of
+            // it from _handleInput) coalesces; any other edit is a step.
+            const typing = e.inputType !== undefined ? e.inputType : this._typingType;
+            const data   = e.inputType !== undefined ? e.data : this._typingData;
+            this._recordHistory(TYPING_KIND.get(typing) || "", data);
             this._queueSacInput();
             this._syncTableButton();
+            this._syncLinkButton();
         });
 
         this._editor.addEventListener("input",       (e) => this._handleInput(e));
@@ -462,6 +717,25 @@ class SacMdEditor extends HTMLElement {
         this._editor.addEventListener("cut",         (e) => this._handleCut(e));
         this._editor.addEventListener("copy",        (e) => this._handleCopy(e));
         this._editor.addEventListener("focusout",    (e) => this._handleFocusOut(e));
+        // A composition (IME, most phone keyboards) cannot be cancelled once
+        // it runs, so a selection across lines goes before it starts; the
+        // composition then types into one line like any typing.
+        this._editor.addEventListener("compositionstart", () => {
+            if (!this.hasAttribute("readonly") && this._getSelectedLines().length > 1) this._deleteSelection();
+        });
+
+        // "Open" under the caret while it is in a link: the way to follow a
+        // link while editing without Ctrl/Cmd (touch). mousedown.prevent
+        // keeps the caret where it is.
+        this._linkBtn.addEventListener("mousedown", (e) => e.preventDefault());
+        // A host that scrolls the surface itself (::part(editor) with
+        // overflow) moves the caret under the button.
+        this._editor.addEventListener("scroll", () => this._syncLinkButton(), { passive: true });
+        this._linkBtn.addEventListener("click", (e) => {
+            const link = this._linkAtCaret();
+            if (link) this._follow(link, e);
+        });
+        trackPress(this.shadowRoot, ".link-open-btn");
 
         // Reveal-toggle click (eye icon on a block's opening line). mousedown.prevent
         // keeps the caret in the surrounding line rather than leaping into
@@ -469,7 +743,24 @@ class SacMdEditor extends HTMLElement {
         // is the inner <svg> (or a path/circle/line) — classList on e.target
         // would miss the wrapping .sac-reveal-toggle span.
         this._editor.addEventListener("mousedown", (e) => {
-            if (e.target.closest?.(".sac-reveal-toggle")) e.preventDefault();
+            if (e.target.closest?.(".sac-reveal-toggle")) { e.preventDefault(); return; }
+            // A task's box is a checkbox: the press toggles it (the click
+            // below) and leaves the caret where it was.
+            if (this._taskBoxAt(e)) { e.preventDefault(); return; }
+            // Ctrl/Cmd+press on a link while editing: the caret stays where
+            // it is, so the line under the pointer is still the same on the
+            // click that follows the link (and Firefox starts no extra
+            // selection range).
+            if (this._followGesture(e) && !this.hasAttribute("readonly") && this._linkAt(e)) {
+                e.preventDefault();
+            }
+        });
+        trackPress(this._editor, ".sac-reveal-toggle");
+        // A middle-click on a host link would open a tab the browser cannot
+        // fill (note:..., a path the host maps).
+        this._editor.addEventListener("auxclick", (e) => {
+            const a = e.target.closest?.("a[href]");
+            if (a && hrefKind(a.getAttribute("href"), this._hostLinks()) === "host") e.preventDefault();
         });
         this._editor.addEventListener("click", (e) => {
             const toggle = e.target.closest?.(".sac-reveal-toggle");
@@ -478,6 +769,9 @@ class SacMdEditor extends HTMLElement {
                 if (line) this._toggleBlockReveal(line);
                 return;
             }
+            const box = this._taskBoxAt(e);
+            if (box) { this._toggleTask(this._lineContaining(box)); return; }
+            if (this._followGesture(e) && this._followLink(e)) return;
             // Read-only has no caret, so no active line shows a masked body
             // sharp - the eye would be the only way in. A click (or tap) on
             // any line of a masked block toggles it instead. Not when the
@@ -497,10 +791,36 @@ class SacMdEditor extends HTMLElement {
         this._toolbar.addEventListener("mousedown", (e) => {
             if (e.target.closest("button[data-fmt]")) e.preventDefault();
         });
+        trackPress(this._toolbar, "button[data-fmt]");
         this._toolbar.addEventListener("click", (e) => {
             const btn = e.target.closest("button[data-fmt]");
-            if (btn) this._applyFormat(btn.dataset.fmt);
+            if (!btn) return;
+            // Pressed from the keyboard, the button has the focus and the
+            // caret is gone: put both back where the writer left them, then
+            // act there - not at the top of the document.
+            if (this.shadowRoot.activeElement === btn) this._resumeEditing();
+            this._applyFormat(btn.dataset.fmt);
         });
+        // One tab stop for the whole toolbar (WAI-ARIA toolbar): the arrow
+        // keys, Home and End move between the buttons.
+        this._toolbar.addEventListener("keydown", (e) => {
+            const btns = [...this._toolbar.querySelectorAll("button[data-fmt]")]
+                .filter((b) => b.getClientRects().length);
+            const i = btns.indexOf(e.target);
+            if (i < 0) return;
+            const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: btns.length - 1 }[e.key];
+            if (to === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
+            e.preventDefault();
+            this._rove(btns[(to + btns.length) % btns.length]);
+        });
+        this._rove(this._toolbar.querySelector("button[data-fmt]"), false);
+    }
+
+    /** Make `btn` the toolbar's one tab stop (and focus it). */
+    _rove(btn, focus = true) {
+        if (!btn) return;
+        for (const b of this._toolbar.querySelectorAll("button[data-fmt]")) b.tabIndex = b === btn ? 0 : -1;
+        if (focus) btn.focus();
     }
 
     // -----------------------------------------------------------------------
@@ -522,7 +842,22 @@ class SacMdEditor extends HTMLElement {
      *  otherwise change the output. */
     _renderLine(line, src = null, state = null, ahead) {
         if (src === null) src = line.textContent;
+        this._paintLine(line, src, state, ahead);
+        // The invariant's last line of defence: a render whose text is not
+        // the source (a tokenizer quirk we have not met yet) shows the plain
+        // source instead. A lost style is cosmetic; a changed value is data
+        // loss on the next save. data-fallback lets the round-trip page
+        // (test/) report it.
+        if (line.textContent !== src) {
+            line.textContent = src;
+            line.dataset.fallback = "";
+        } else if (line.dataset.fallback !== undefined) {
+            delete line.dataset.fallback;
+        }
+    }
 
+    /** _renderLine's body: the line's markup for `src`. */
+    _paintLine(line, src, state, ahead) {
         // No state passed = unknown context: render as a top-of-document
         // line and leave the key unset, so the next sweep redoes it.
         const known = !!state;
@@ -535,7 +870,9 @@ class SacMdEditor extends HTMLElement {
 
         line.classList.remove("active");
         this._applyBlockClass(line, src, block);
-        const defs = this._linkDefs;
+        // What inline rendering needs: reference definitions, and whether
+        // relative hrefs are links here (links="host").
+        const ctx = { defs: this._linkDefs, host: this._hostLinks() };
 
         const blockType = line.dataset.block || "";
         if (blockType === "fence-body") {
@@ -556,7 +893,14 @@ class SacMdEditor extends HTMLElement {
             if (m) {
                 const prefix = m[1];
                 const rest   = src.substring(prefix.length);
-                line.innerHTML = `<span class="block-marker">${escapeHtml(prefix)}</span>${renderInline(rest, defs)}`;
+                // A bullet's own character gets a span: the rendered bullet
+                // is drawn over it, so the marker keeps the width it has on
+                // the caret line and the text does not move between the two.
+                const b = blockType === "ul" && /^(\s*)(\S)(\s*)$/.exec(prefix);
+                const marker = b
+                    ? `${escapeHtml(b[1])}<span class="list-bullet">${escapeHtml(b[2])}</span>${escapeHtml(b[3])}`
+                    : escapeHtml(prefix);
+                line.innerHTML = `<span class="block-marker">${marker}</span>${renderInline(rest, ctx)}`;
                 return;
             }
         }
@@ -565,11 +909,13 @@ class SacMdEditor extends HTMLElement {
             if (m) {
                 const checked = m[2] === "x" || m[2] === "X";
                 const boxClass = checked ? "task-box checked" : "task-box";
+                // The text in its own span: a done task strikes its text,
+                // not the (invisible) markers in front of it.
                 line.innerHTML =
                     `<span class="block-marker">${escapeHtml(m[1])}</span>` +
                     `<span class="${boxClass}">[${m[2]}]</span>` +
                     `<span class="block-marker">${escapeHtml(m[3])}</span>` +
-                    renderInline(m[4], defs);
+                    `<span class="task-text">${renderInline(m[4], ctx)}</span>`;
                 return;
             }
         }
@@ -586,7 +932,8 @@ class SacMdEditor extends HTMLElement {
                 `<span class="block-marker">${escapeHtml(src)}</span>` +
                 (block.def.toggle
                     ? `<span class="sac-reveal-toggle" contenteditable="false" ` +
-                      `      role="button" tabindex="-1" ` +
+                      `      role="button" tabindex="${this.hasAttribute("readonly") ? 0 : -1}" ` +
+                      `      aria-pressed="${line.classList.contains("block-revealed")}" ` +
                       `      aria-label="${escapeAttr(this._revealLabel())}" ` +
                       `      title="${escapeAttr(this._revealLabel())}">` +
                       REVEAL_EYE_SVG +
@@ -602,12 +949,12 @@ class SacMdEditor extends HTMLElement {
             // Content wrapped in .block-body-text so a mask blurs just the
             // text - blurring the whole line would smear the card's left
             // border too. Source is preserved (line.textContent equals src).
-            const inner = src === "" ? "" : renderInline(src, defs);
+            const inner = src === "" ? "" : renderInline(src, ctx);
             line.innerHTML = `<span class="block-body-text">${inner}</span>`;
             return;
         }
         if (TABLE_TYPES.has(blockType)) {
-            line.innerHTML = renderTableRow(src, blockType, block.aligns, defs);
+            line.innerHTML = renderTableRow(src, blockType, block.aligns, ctx);
             return;
         }
         if (blockType === "indent-code") {
@@ -627,7 +974,7 @@ class SacMdEditor extends HTMLElement {
             line.innerHTML = "";
             return;
         }
-        line.innerHTML = renderInline(src, defs);
+        line.innerHTML = renderInline(src, ctx);
     }
 
     /** Flatten a line to a single text node, preserving the caret position
@@ -699,6 +1046,11 @@ class SacMdEditor extends HTMLElement {
         if (src === "") classes.push("empty");
         line.className = classes.join(" ");
         line.dataset.block = block.type;
+        // Lists, tasks and quotes hang their marker (CSS): --mk is its
+        // width, so wrapped lines line up under the text.
+        const mk = hangingMarker(src, block.type);
+        if (mk) line.style.setProperty("--mk", markerEm(mk) + "em");
+        else line.style.removeProperty("--mk");
         this._revealHint(line);
         // Registered blocks carry their name, tint and pill label on the
         // line itself (inline custom properties); anything else sheds them.
@@ -734,6 +1086,16 @@ class SacMdEditor extends HTMLElement {
     _handleSelectionChange() {
         if (this._suppressSelect) return;
         if (!this._editor) return;
+        // Focus has left the editor (for an input on the page, say): leave
+        // the caret alone. Firefox keeps the document selection in our lines
+        // after the focus moves on, and the blur's re-render shifts it onto
+        // the editor root - placing the caret from there pulls the focus
+        // straight back in (#4). Read-only takes no focus and keeps its path.
+        if (!this.hasAttribute("readonly") &&
+            !this._editor.contains(this.shadowRoot.activeElement)) return;
+        // The table dialog is open, or closing the native way and its close
+        // event not yet in: _tdClosed puts the caret back, not the browser.
+        if (this._td) return;
         const sel = this._currentSelection();
         if (!sel || !sel.rangeCount) return;
         const range = sel.getRangeAt(0);
@@ -763,7 +1125,7 @@ class SacMdEditor extends HTMLElement {
         // replaceChildren on the line, which destroys the DOM nodes the
         // browser's range object references and silently clobbers the
         // selection. Just track the band and bail out.
-        if (!range.collapsed) return;
+        if (!range.collapsed) { this._syncLinkButton(); return; }
 
         const newActive = this._lineContaining(anchor);
 
@@ -776,7 +1138,9 @@ class SacMdEditor extends HTMLElement {
             this._renderLine(line, null, this._stateBefore(line));
         }
 
-        if (newActive === this._activeLine) return;
+        if (newActive === this._activeLine) { this._syncLinkButton(); return; }
+        // Typing on another line is another undo step.
+        this._commitPendingHistory();
         const left = this._activeLine;
         this._activeLine = newActive;
         // Leaving a table (not just moving between its rows) tidies it:
@@ -787,6 +1151,7 @@ class SacMdEditor extends HTMLElement {
         }
         if (newActive) this._flattenLine(newActive);
         this._syncTableButton();
+        this._syncLinkButton();
     }
 
     /** Intercept destructive edits that cross a multi-line selection.
@@ -797,6 +1162,20 @@ class SacMdEditor extends HTMLElement {
      *  (the normal typing case) fall through to the browser unchanged. */
     _handleBeforeInput(e) {
         if (this.hasAttribute("readonly")) return;
+        const t = e.inputType || "";
+        // The browser's own Undo / Redo (Edit menu, a phone's shake or
+        // three-finger swipe): its native stack knows nothing of our line
+        // divs, so it goes through our history like Ctrl+Z.
+        if (t === "historyUndo" || t === "historyRedo") {
+            e.preventDefault();
+            if (t === "historyUndo") this.undo(); else this.redo();
+            return;
+        }
+        // A composition (IME, most phone keyboards) cannot be cancelled:
+        // replacing its text here as well would put it in twice. A selection
+        // across lines went at compositionstart; inside one line the browser
+        // replaces it like any typing.
+        if (e.isComposing || t === "insertCompositionText") return;
         const sel = this._currentSelection();
         if (!sel || !sel.rangeCount) return;
         const range = sel.getRangeAt(0);
@@ -804,14 +1183,15 @@ class SacMdEditor extends HTMLElement {
         if (!this._editor.contains(range.startContainer) &&
             range.startContainer !== this._editor) return;
 
-        const t = e.inputType || "";
         // insertFromPaste is intentionally not handled here - the dedicated
         // paste listener owns that flow, and handling both would double-insert.
-        if (t === "insertText" ||
-            t === "insertCompositionText" || t === "insertReplacementText") {
+        if (t === "insertText" || t === "insertReplacementText") {
             e.preventDefault();
+            // A spelling suggestion (insertReplacementText) carries its text
+            // in dataTransfer in a contenteditable; e.data is null there.
+            const text = e.data ?? e.dataTransfer?.getData("text/plain") ?? "";
             this._deleteSelection();
-            if (e.data) this._insertTextAtCaret(e.data);
+            if (text) this._insertTextAtCaret(text);
             return;
         }
         if (t === "insertParagraph" || t === "insertLineBreak") {
@@ -846,18 +1226,18 @@ class SacMdEditor extends HTMLElement {
         if (e.clipboardData) e.clipboardData.setData("text/plain", text);
     }
 
-    /** Reconstruct the currently-selected text from the line model.
-     *  Handles selections that span multiple line divs - sel.toString()
-     *  is unreliable inside shadow DOM and across divs. */
-    _selectedText() {
+    /** The current selection as lines and offsets, start before end:
+     *  { first, startOff, last, endOff }, or null when it is collapsed or
+     *  not in the lines. */
+    _selRange() {
         const sel = this._currentSelection();
-        if (!sel || !sel.rangeCount) return "";
+        if (!sel || !sel.rangeCount) return null;
         const range = sel.getRangeAt(0);
-        if (range.collapsed) return "";
+        if (range.collapsed) return null;
 
         const startLine = this._lineContaining(range.startContainer);
         const endLine   = this._lineContaining(range.endContainer);
-        if (!startLine || !endLine) return "";
+        if (!startLine || !endLine) return null;
 
         let first = startLine, last = endLine;
         let startOff = this._charOffset(startLine, range.startContainer, range.startOffset);
@@ -871,7 +1251,16 @@ class SacMdEditor extends HTMLElement {
         } else if (startOff > endOff) {
             [startOff, endOff] = [endOff, startOff];
         }
+        return { first, startOff, last, endOff };
+    }
 
+    /** Reconstruct the currently-selected text from the line model.
+     *  Handles selections that span multiple line divs - sel.toString()
+     *  is unreliable inside shadow DOM and across divs. */
+    _selectedText() {
+        const r = this._selRange();
+        if (!r) return "";
+        const { first, startOff, last, endOff } = r;
         if (first === last) {
             return first.textContent.substring(startOff, endOff);
         }
@@ -890,27 +1279,9 @@ class SacMdEditor extends HTMLElement {
      *  over-selection. Keeping it in one helper means there's exactly
      *  one place that owns the line-merge logic for cross-line deletes. */
     _deleteSelection() {
-        const sel = this._currentSelection();
-        if (!sel || !sel.rangeCount) return false;
-        const range = sel.getRangeAt(0);
-        if (range.collapsed) return false;
-
-        const startLine = this._lineContaining(range.startContainer);
-        const endLine   = this._lineContaining(range.endContainer);
-        if (!startLine || !endLine) return false;
-
-        let first = startLine, last = endLine;
-        let startOff = this._charOffset(startLine, range.startContainer, range.startOffset);
-        let endOff   = this._charOffset(endLine,   range.endContainer,   range.endOffset);
-        if (first !== last) {
-            const pos = first.compareDocumentPosition(last);
-            if (pos & Node.DOCUMENT_POSITION_PRECEDING) {
-                [first, last] = [last, first];
-                [startOff, endOff] = [endOff, startOff];
-            }
-        } else if (startOff > endOff) {
-            [startOff, endOff] = [endOff, startOff];
-        }
+        const r = this._selRange();
+        if (!r) return false;
+        const { first, startOff, last, endOff } = r;
 
         const prefix = first.textContent.substring(0, startOff);
         const suffix = last.textContent.substring(endOff);
@@ -980,11 +1351,35 @@ class SacMdEditor extends HTMLElement {
             this._placeCaretInLine(line, 0);
         }
 
-        this.dispatchEvent(new Event("input", { bubbles: true }));
+        // The re-dispatch is a plain Event: tell the history what kind of
+        // edit it carries, so typing coalesces.
+        this._typingType = e.inputType;
+        this._typingData = e.data;
+        try {
+            this.dispatchEvent(new Event("input", { bubbles: true }));
+        } finally {
+            this._typingType = this._typingData = undefined;
+        }
     }
 
     _handleKeyDown(e) {
+        // A masked block's eye, focused (a tab stop in read-only): Enter or
+        // Space toggles it, as on any button.
+        const eye = e.target.closest?.(".sac-reveal-toggle");
+        if (eye && (e.key === "Enter" || e.key === " ") && !e.repeat) {
+            e.preventDefault();
+            const line = this._lineContaining(eye);
+            if (line) this._toggleBlockReveal(line);
+            return;
+        }
         if (this.hasAttribute("readonly")) return;
+        // A key that steers a composition (IME, a phone keyboard) is the
+        // composition's: Enter picks a candidate there, it splits no line.
+        if (e.isComposing || e.keyCode === 229) return;
+        // Esc, then Tab leaves the editor from anywhere. The Shift of
+        // Shift+Tab keeps it; any other key drops it.
+        const released = this._tabReleased;
+        if (!MODIFIER_KEYS.has(e.key)) this._tabReleased = false;
 
         // Undo/redo. Check these before formatting shortcuts so Ctrl+Z in
         // any state (including inside a contenteditable that has its own
@@ -1023,6 +1418,23 @@ class SacMdEditor extends HTMLElement {
             this._tableEscape();
             return;
         }
+        // Esc anywhere else arms the way out (the next Tab leaves) and goes
+        // on to the host untouched - a dialog around the editor still closes.
+        if (e.key === "Escape") {
+            this._tabReleased = true;
+            return;
+        }
+
+        // Alt+Enter on a link: follow it, as Ctrl/Cmd+click does. Not on a
+        // link it is a plain Enter.
+        if (e.key === "Enter" && e.altKey && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
+            const link = this._linkAtCaret();
+            if (link) {
+                e.preventDefault();
+                this._follow(link, e);
+                return;
+            }
+        }
 
         if (e.key === "Enter" && !e.shiftKey && !(e.ctrlKey || e.metaKey)) {
             e.preventDefault();
@@ -1041,15 +1453,124 @@ class SacMdEditor extends HTMLElement {
             if (this._tryMergeBackspace()) e.preventDefault();
             return;
         }
-        if (e.key === "Tab") {
-            e.preventDefault();
-            if (this._inTable()) { this._tableTab(e.shiftKey); return; }
-            // Tab with a selection: replace the selection with a tab stop
-            // instead of expanding it.
-            this._deleteSelection();
-            this._insertAtCaret(e.shiftKey ? "" : "  ");
+        // Tab is the keyboard's way from field to field, so the editor only
+        // keeps it where it means something in the text: table cells, list
+        // items, code. Anywhere else - and after Esc - the browser moves the
+        // focus on. It never replaces a selection.
+        if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            if (released) return;
+            if (this._inTable()) {
+                e.preventDefault();
+                this._tableTab(e.shiftKey);
+                return;
+            }
+            if (this._tabIndent(e.shiftKey)) e.preventDefault();
             return;
         }
+    }
+
+    /** Tab / Shift+Tab outside a table: indent / outdent the caret line, or
+     *  every line of a selection, when they are list items or code (blank
+     *  and fence lines in a selection go along untouched). A list item
+     *  nests under the item above (its marker's width: 2 for "- ", 3 for
+     *  "1. ") and outdents to its parent's indent; code takes two spaces -
+     *  at the caret when nothing is selected. False when the lines are
+     *  anything else, or Shift+Tab has nothing to outdent: the key then
+     *  moves the focus. */
+    _tabIndent(back) {
+        const r = this._selRange();
+        const lines = r ? this._linesBetween(r.first, r.last)
+                        : (this._activeLine ? [this._activeLine] : []);
+        const kindOf = (l) => {
+            const b = l.dataset.block;
+            if (b === "ul" || b === "ol" || b === "task") return "list";
+            if (b === "fence-body" || b === "indent-code") return "code";
+            if (b === "fence" || l.textContent.trim() === "") return "";
+            return null;
+        };
+        const kinds = lines.map(kindOf);
+        if (kinds.includes(null) || !kinds.some(Boolean)) return false;
+
+        const active = this._activeLine;
+        // Code, caret only, Tab: a soft tab at the caret, as before.
+        if (!r && !back && kinds[0] === "code") {
+            this._insertAtCaret("  ");
+            return true;
+        }
+        const caret = r ? null : (this._caretOffsetInLine(active) ?? 0);
+        const edits = [];
+        lines.forEach((l, i) => {
+            const text = l.textContent;
+            const lead = /^[ \t]*/.exec(text)[0];
+            let want;      // the new leading whitespace
+            if (kinds[i] === "list") {
+                const cols = indentCols(lead);
+                if (back) {
+                    const parent = this._listItemAbove(l, (c) => c < cols);
+                    want = " ".repeat(parent ? indentCols(parent[1]) : 0);
+                } else {
+                    const sib = this._listItemAbove(l, (c) => c <= cols);
+                    const unit = sib && indentCols(sib[1]) === cols ? sib[2].length + sib[3].length : 2;
+                    want = " ".repeat(cols + unit);
+                }
+            } else if (kinds[i] === "code") {
+                want = back ? lead.replace(/^(\t| {1,2})/, "") : "  " + lead;
+            } else {
+                return;
+            }
+            if (want !== lead) edits.push({ l, text: want + text.slice(lead.length), from: lead.length, to: want.length });
+        });
+        if (!edits.length) return false;
+
+        // The caret / selection follows its characters.
+        const moved = (line, off) => {
+            const ed = edits.find((x) => x.l === line);
+            if (!ed) return off;
+            return off < ed.from ? Math.min(off, ed.to) : off + ed.to - ed.from;
+        };
+        const sel = r ? { a: r.first, ao: moved(r.first, r.startOff), b: r.last, bo: moved(r.last, r.endOff) }
+                      : { a: active, ao: moved(active, caret) };
+        for (const { l, text } of edits) {
+            if (l === active) l.replaceChildren(document.createTextNode(text));
+            else l.textContent = text;
+            l._blockState = undefined;
+        }
+        if (active && edits.some((x) => x.l === active)) this._applyBlockClassFor(active);
+        this._dirty = true;
+        // The sweep in the input listener renders the rewritten lines; the
+        // selection goes back after it, into their new nodes.
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+        if (r) this._selectLines(sel.a, sel.ao, sel.b, sel.bo);
+        else if (active) this._placeCaretInLine(active, sel.ao);
+        return true;
+    }
+
+    /** The lines from `first` to `last`, in order. */
+    _linesBetween(first, last) {
+        const out = [];
+        for (let cur = first; cur; cur = cur.nextElementSibling) {
+            out.push(cur);
+            if (cur === last) break;
+        }
+        return out;
+    }
+
+    /** The nearest list item above `line` in the same list whose indent
+     *  (columns) passes `test`, as a LIST_ITEM_RE match, or null. Blank and
+     *  indented lines (an item's continuation) are part of the list; any
+     *  other line ends it. */
+    _listItemAbove(line, test) {
+        for (let cur = line.previousElementSibling; cur; cur = cur.previousElementSibling) {
+            const text = cur.textContent;
+            const m = LIST_ITEM_RE.exec(text);
+            if (m) {
+                if (test(indentCols(m[1]))) return m;
+                continue;
+            }
+            if (text.trim() === "" || /^[ \t]/.test(text)) continue;
+            return null;
+        }
+        return null;
     }
 
     _handlePaste(e) {
@@ -1072,6 +1593,10 @@ class SacMdEditor extends HTMLElement {
         // Nor is focus moving into our own table dialog (shadow DOM, so
         // this.contains() cannot see it) - or anything while it is open.
         if (this._tdlg && (this._tdlg.open || this._tdlg.contains(e.relatedTarget))) return;
+        // Where the caret was, for a toolbar button pressed from the
+        // keyboard next (the render below replaces the nodes, not the text).
+        this._lastSel = this._selectionIndices();
+        this._commitPendingHistory();
         // Full re-render on blur. We used to just re-render active lines, but
         // that left cross-line state drift — e.g. typing :::secret on a line
         // doesn't mask the lines below until every subsequent line is re-
@@ -1086,6 +1611,7 @@ class SacMdEditor extends HTMLElement {
             line.classList.remove("sel");
         }
         this._activeLine = null;
+        this._syncLinkButton();
         if (this._dirty) {
             this._dirty = false;
             this.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1206,7 +1732,7 @@ class SacMdEditor extends HTMLElement {
     }
 
     _insertTextAtCaret(text) {
-        const lines = text.replace(/\r\n/g, "\n").split("\n");
+        const lines = normalizeEol(text).split("\n");
         if (!this._activeLine) {
             // No active line - drop onto the first line.
             const first = this._editor.firstElementChild;
@@ -1274,9 +1800,9 @@ class SacMdEditor extends HTMLElement {
         const sel  = this._getLineSelection(line);
 
         switch (kind) {
-            case "bold":   return this._wrapInLine(line, sel, "**", "**", "bold text");
-            case "italic": return this._wrapInLine(line, sel, "*",  "*",  "italic");
-            case "strike": return this._wrapInLine(line, sel, "~~", "~~", "struck");
+            case "bold":   return this._wrapInLine(line, sel, "**", "**", mdT("boldText", "bold text"));
+            case "italic": return this._wrapInLine(line, sel, "*",  "*",  mdT("italicText", "italic"));
+            case "strike": return this._wrapInLine(line, sel, "~~", "~~", mdT("strikeText", "struck"));
             case "h1":     return this._togglePrefix(line, "# ");
             case "h2":     return this._togglePrefix(line, "## ");
             case "h3":     return this._togglePrefix(line, "### ");
@@ -1288,7 +1814,7 @@ class SacMdEditor extends HTMLElement {
             case "code": {
                 const selectedLines = this._getSelectedLines();
                 if (selectedLines.length > 1) return this._wrapAsCodeFence(selectedLines);
-                return this._wrapInLine(line, sel, "`", "`", "code");
+                return this._wrapInLine(line, sel, "`", "`", mdT("codeText", "code"));
             }
             case "link": {
                 const url = window.prompt(mdT("linkPrompt", "Link URL"), "https://");
@@ -1297,6 +1823,38 @@ class SacMdEditor extends HTMLElement {
                 return this._wrapInLine(line, sel, "[", `](${safe})`, mdT("linkText", "link text"));
             }
         }
+    }
+
+    /** Back into the text after a toolbar button took the focus (the
+     *  keyboard's way to it): focus, and the caret or selection where it
+     *  was when the focus left. */
+    _resumeEditing() {
+        this._editor.focus({ preventScroll: true });
+        const s = this._lastSel;
+        this._lastSel = null;
+        const kids = this._editor.children;
+        const first = s && kids[s.a], last = s && kids[s.b];
+        if (!first || !last) return;
+        const fo = Math.min(s.ao, first.textContent.length);
+        const lo = Math.min(s.bo, last.textContent.length);
+        if (first === last) {
+            this._activateLine(first, fo, lo);
+        } else {
+            this._activateLine(first, fo);
+            this._selectLines(first, fo, last, lo);
+        }
+    }
+
+    /** The selection (or caret) as line indices and offsets, start first:
+     *  { a, ao, b, bo }, or null when there is none in the lines. */
+    _selectionIndices() {
+        const kids = Array.from(this._editor.children);
+        const r = this._selRange();
+        if (r) return { a: kids.indexOf(r.first), ao: r.startOff, b: kids.indexOf(r.last), bo: r.endOff };
+        const line = this._activeLine;
+        if (!line || !line.isConnected) return null;
+        const i = kids.indexOf(line), o = this._caretOffsetInLine(line) ?? 0;
+        return { a: i, ao: o, b: i, bo: o };
     }
 
     _ensureActiveLine() {
@@ -1677,10 +2235,34 @@ class SacMdEditor extends HTMLElement {
             if (i.dataset && i.dataset.r !== undefined) this._td.data[Number(i.dataset.r)][Number(i.dataset.c)] = i.value;
         });
         d.addEventListener("change", (e) => e.stopPropagation());
-        // Esc cancels the dialog (native) and goes no further.
-        d.addEventListener("keydown", (e) => { if (e.key === "Escape") e.stopPropagation(); });
-        // Enter in a cell submits the form = Apply; so does the button.
+        // Esc cancels and goes no further. Enter in a cell submits the form
+        // = Apply; so does the button. Both close through _tdClose, not the
+        // native way: see there.
+        d.addEventListener("keydown", (e) => {
+            if (e.key !== "Escape" || e.isComposing) return;
+            e.stopPropagation();
+            e.preventDefault();
+            this._tdClose("cancel");
+        });
+        d.querySelector("form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            this._tdClose("apply");
+        });
+        // Anything else that closes it (a native close request that got
+        // through): same clean-up, a task later.
         d.addEventListener("close", () => this._tdClosed());
+    }
+
+    /** Close the dialog and put the editor back in the same task. close()
+     *  hands the focus back to the editor at once, with the caret on the
+     *  first line; the close event follows a task (in a throttled page,
+     *  much) later. Waiting for it let our selectionchange take that caret
+     *  for a move out of the table - line 1 activated, the table re-aligned
+     *  (an edit, on Cancel) and typing landing there until the event came. */
+    _tdClose(returnValue) {
+        if (!this._tdlg.open) return;
+        this._tdlg.close(returnValue);
+        this._tdClosed();
     }
 
     _tdLabels() {
@@ -1740,7 +2322,7 @@ class SacMdEditor extends HTMLElement {
         const swap = (arr, i, j) => { [arr[i], arr[j]] = [arr[j], arr[i]]; };
         let focus = null;
         switch (kind) {
-            case "cancel": this._tdlg.close("cancel"); return;
+            case "cancel": this._tdClose("cancel"); return;
             case "add-row":
                 data.push(aligns.map(() => ""));
                 focus = `input[data-r="${data.length - 1}"][data-c="0"]`;
@@ -1888,6 +2470,176 @@ class SacMdEditor extends HTMLElement {
     }
 
     // -----------------------------------------------------------------------
+    // Following links (sac:link)
+    // -----------------------------------------------------------------------
+
+    /** The press that follows a link: any primary click in read-only, a
+     *  Ctrl/Cmd one while editing (a plain click there places the caret). */
+    _followGesture(e) {
+        if (e.button !== 0) return false;
+        return this.hasAttribute("readonly") || e.ctrlKey || e.metaKey;
+    }
+
+    /** The followable link under a pointer event, or null:
+     *  { href, kind, text, raw, line }. A rendered line has its anchors.
+     *  The caret line is flat source, so it is rendered once more,
+     *  detached, and the character under the pointer looked up there - by
+     *  the invariant both hold the same text, so the offsets agree. */
+    _linkAt(e) {
+        const line = this._lineContaining(e.target);
+        if (!line) return null;
+        const a = e.target.closest?.("a");
+        if (a) return this._linkInfo(a, line);
+        if (!line.classList.contains("active")) return null;
+        const offset = this._offsetAtPoint(line, e.clientX, e.clientY);
+        return offset === null ? null : this._linkInLine(line, offset);
+    }
+
+    /** The followable link at the caret (collapsed, on the caret line), or
+     *  null - for Alt+Enter and the Open button. */
+    _linkAtCaret() {
+        const line = this._activeLine;
+        if (!line || !line.isConnected) return null;
+        const sel = this._currentSelection();
+        if (!sel || !sel.rangeCount || !sel.getRangeAt(0).collapsed) return null;
+        const offset = this._caretOffsetInLine(line);
+        return offset === null ? null : this._linkInLine(line, offset);
+    }
+
+    /** The followable link at `offset` in the caret line's source. The line
+     *  is rendered once more, detached, and the anchor at that offset looked
+     *  up there - by the invariant both hold the same text. The render is
+     *  kept while the line's text is unchanged: the caret moves far more
+     *  often than the text does. */
+    _linkInLine(line, offset) {
+        const src = line.textContent;
+        const key = [src, this._linkDefsKey || "", blockGen, this._hostLinks()].join("\u0000");
+        let probe = this._linkProbe;
+        if (!probe || probe.line !== line || probe.key !== key) {
+            const state = this._stateBefore(line);
+            const ahead = this._aheadFor(line, state, src);
+            const div = document.createElement("div");
+            this._renderLine(div, src, state, ahead);
+            probe = this._linkProbe = { line, key, div };
+        }
+        return this._linkInfo(anchorAtOffset(probe.div, offset), line);
+    }
+
+    /** { href, kind, text, raw, line } for a rendered anchor, or null when
+     *  it is not a link the editor follows (see hrefKind). */
+    _linkInfo(a, line) {
+        if (!a || !a.hasAttribute("href")) return null;
+        const href = a.getAttribute("href");
+        const kind = hrefKind(href, this._hostLinks());
+        if (!kind) return null;
+        return {
+            href, kind,
+            text: a.hasAttribute("data-glyph") ? a.getAttribute("data-glyph") : a.textContent,
+            raw:  linkRaw(a),
+            line: Array.prototype.indexOf.call(this._editor.children, line),
+        };
+    }
+
+    /** Character offset in `line` under a viewport point, or null. */
+    _offsetAtPoint(line, x, y) {
+        let node = null, offset = 0;
+        if (document.caretPositionFromPoint) {
+            const pos = document.caretPositionFromPoint(x, y, { shadowRoots: [this.shadowRoot] });
+            if (pos) { node = pos.offsetNode; offset = pos.offset; }
+        } else if (document.caretRangeFromPoint) {
+            const range = document.caretRangeFromPoint(x, y);
+            if (range) { node = range.startContainer; offset = range.startOffset; }
+        }
+        if (!node || (node !== line && !line.contains(node))) return null;
+        return this._charOffset(line, node, offset);
+    }
+
+    /** Fire sac:link for the link a follow gesture hit. Unless the host
+     *  cancels it, a web link opens the way it always did (a new tab: the
+     *  browser's own in read-only, window.open while editing, where the
+     *  browser follows nothing); a host link goes nowhere - only the host
+     *  knows where it points. True when the click was a link's. */
+    _followLink(e) {
+        const link = this._linkAt(e);
+        if (!link) return false;
+        this._follow(link, e);
+        return true;
+    }
+
+    /** Follow `link` for the event `e` (a click, Alt+Enter, the Open
+     *  button): sac:link first, then the editor's own way unless cancelled. */
+    _follow(link, e) {
+        const go = this.dispatchEvent(new CustomEvent("sac:link", {
+            detail: { href: link.href, text: link.text, raw: link.raw, line: link.line },
+            bubbles: true,
+            composed: true,
+            cancelable: true,
+        }));
+        const readonly = this.hasAttribute("readonly");
+        if (!(go && link.kind === "web" && readonly)) e.preventDefault();
+        if (go && link.kind === "web" && !readonly) window.open(link.href, "_blank", "noopener,noreferrer");
+    }
+
+    /** "Open" under the caret while it sits in a link it can follow, so a
+     *  link can be followed while editing without Ctrl/Cmd - the only way
+     *  on touch. Below the caret's line, or above it near the bottom. */
+    _syncLinkButton() {
+        const btn = this._linkBtn;
+        if (!btn) return;
+        const editing = !this.hasAttribute("readonly") && this._editor.contains(this.shadowRoot.activeElement);
+        const link = editing ? this._linkAtCaret() : null;
+        if (!link) {
+            if (!btn.hidden) btn.hidden = true;
+            return;
+        }
+        const sel = this._currentSelection();
+        const range = sel.getRangeAt(0);
+        let caret = range.getClientRects()[0] || range.getBoundingClientRect();
+        if (!caret || (!caret.height && !caret.width)) caret = this._activeLine.getBoundingClientRect();
+        const host = this.getBoundingClientRect();
+        btn.hidden = false;
+        const w = btn.offsetWidth, h = btn.offsetHeight;
+        const x = Math.max(8, Math.min(caret.left - host.left - this.clientLeft, this.clientWidth - w - 8));
+        let y = caret.bottom - host.top - this.clientTop + 4;
+        if (host.top + this.clientTop + y + h > Math.min(host.bottom, window.innerHeight)) {
+            y = caret.top - host.top - this.clientTop - h - 4;
+        }
+        btn.style.left = x + "px";
+        btn.style.top  = y + "px";
+        btn.setAttribute("aria-label", `${mdT("openLinkTip", "Open link (Alt+Enter)")}: ${link.href}`);
+    }
+
+    /** The task box under a pointer event that toggles it, or null: a plain
+     *  primary press while editing, on a rendered line (on the caret line
+     *  the box is its source, [ ] or [x], to edit as text). */
+    _taskBoxAt(e) {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return null;
+        if (this.hasAttribute("readonly")) return null;
+        const box = e.target.closest?.(".task-box");
+        const line = box && this._lineContaining(box);
+        return line && !line.classList.contains("active") ? box : null;
+    }
+
+    /** Tick or untick a task: [ ] <-> [x], an edit like any other. With the
+     *  focus elsewhere (a click on a box is all it took) the change fires
+     *  at once, as a checkbox's does. */
+    _toggleTask(line) {
+        const src = line && line.textContent;
+        const m = src && TASK_RE.exec(src);
+        if (!m) return;
+        const at = m[1].length + 1;
+        line.textContent = src.slice(0, at) + (m[2] === " " ? "x" : " ") + src.slice(at + 1);
+        line._blockState = undefined;
+        this._dirty = true;
+        this.dispatchEvent(new Event("input", { bubbles: true }));
+        if (!this._editor.contains(this.shadowRoot.activeElement)) {
+            this._dirty = false;
+            this.dispatchEvent(new Event("change", { bubbles: true }));
+            this._fireSac("sac:change");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Caret + selection helpers
     // -----------------------------------------------------------------------
 
@@ -1975,14 +2727,19 @@ class SacMdEditor extends HTMLElement {
     }
 
     _selectInLine(line, start, end) {
+        this._selectLines(line, start, line, end);
+    }
+
+    /** Select from `start` in line `first` to `end` in line `last`. */
+    _selectLines(first, start, last, end) {
         this._suppressSelect = true;
         try {
             const sel = this._currentSelection();
             const range = document.createRange();
-            const a = this._textNodeAtOffset(line, start);
-            const b = this._textNodeAtOffset(line, end);
-            if (a.node) range.setStart(a.node, a.offset); else range.setStart(line, 0);
-            if (b.node) range.setEnd(b.node, b.offset);   else range.setEnd(line, 0);
+            const a = this._textNodeAtOffset(first, start);
+            const b = this._textNodeAtOffset(last, end);
+            if (a.node) range.setStart(a.node, a.offset); else range.setStart(first, 0);
+            if (b.node) range.setEnd(b.node, b.offset);   else range.setEnd(last, 0);
             if (sel) {
                 sel.removeAllRanges();
                 sel.addRange(range);
@@ -2026,8 +2783,10 @@ class SacMdEditor extends HTMLElement {
     // enough that storing N copies is fine.
     // -----------------------------------------------------------------------
 
-    canUndo() { return this._historyIdx > 0; }
-    canRedo() { return this._historyIdx < this._history.length - 1; }
+    // Typing not yet on the stack (_pendingEntry) is a step to undo, and
+    // the start of a new branch: nothing left to redo.
+    canUndo() { return this._historyIdx > 0 || !!this._pendingEntry; }
+    canRedo() { return !this._pendingEntry && this._historyIdx < this._history.length - 1; }
 
     undo() {
         if (this.hasAttribute("readonly")) return;
@@ -2052,6 +2811,8 @@ class SacMdEditor extends HTMLElement {
     _resetHistory() {
         clearTimeout(this._historyTimer);
         this._historyTimer = null;
+        this._pendingEntry = null;
+        this._pendingKind  = "";
         this._history    = [this._snapshot()];
         this._historyIdx = 0;
         this._notifyHistory();
@@ -2069,19 +2830,47 @@ class SacMdEditor extends HTMLElement {
         return { value: this.value, lineIdx, offset };
     }
 
-    _scheduleHistorySnapshot() {
+    /** One edit for the history. `kind` "insert" / "delete" is typing: it
+     *  coalesces into one step, which closes when a word ends (a typed
+     *  space goes with it), typing pauses, typing turns from inserting to
+     *  deleting or back, the caret leaves the line, or another edit comes.
+     *  Any other edit ("") is a step of its own. The step's state is the
+     *  one after its last keystroke, kept in _pendingEntry until it closes -
+     *  so an edit that is not typing can close it after the fact, without
+     *  a hook before every kind of change. Duplicate values are dropped in
+     *  _pushHistory, so events that change nothing add nothing. */
+    _recordHistory(kind, data) {
         if (this._suppressHistory) return;
-        // Per-keystroke undo: push a snapshot on every input event. Duplicate-
-        // value pushes are dropped inside _pushHistory, so non-text events
-        // (caret movement, focus) don't pollute the stack. _commitPendingHistory
-        // is a no-op now but kept as a hook in case we ever re-introduce
-        // coalescing - undo/redo call it before stepping, so the contract
-        // "stack is caught up before a step" holds either way.
-        this._pushHistory(this._snapshot());
+        const entry = this._snapshot();
+        if (!kind) {
+            this._commitPendingHistory();
+            this._pushHistory(entry);
+            return;
+        }
+        if (this._pendingEntry && this._pendingKind !== kind) this._commitPendingHistory();
+        const fresh = !this._pendingEntry;
+        this._pendingEntry = entry;
+        this._pendingKind  = kind;
+        clearTimeout(this._historyTimer);
+        if (kind === "insert" && typeof data === "string" && /\s$/.test(data)) {
+            this._commitPendingHistory();
+            return;
+        }
+        this._historyTimer = setTimeout(() => this._commitPendingHistory(), HISTORY_PAUSE_MS);
+        // The first keystroke of a step: Undo is possible now, Redo is not.
+        if (fresh) this._notifyHistory();
     }
 
+    /** Close the typing step in progress: its state goes onto the stack.
+     *  undo / redo call it first, so the stack is caught up before a step. */
     _commitPendingHistory() {
-        // No debounced work to flush; per-keystroke snapshots are synchronous.
+        clearTimeout(this._historyTimer);
+        this._historyTimer = null;
+        const entry = this._pendingEntry;
+        if (!entry) return;
+        this._pendingEntry = null;
+        this._pendingKind  = "";
+        this._pushHistory(entry);
     }
 
     _pushHistory(entry) {
@@ -2093,7 +2882,7 @@ class SacMdEditor extends HTMLElement {
         const last = this._history[this._history.length - 1];
         if (last && last.value === entry.value) return;
         this._history.push(entry);
-        // Cap memory. 1000 steps ≈ 1000 characters typed; deep enough for
+        // Cap memory. 1000 steps - words, mostly - is deep enough for
         // realistic editing, still trivial memory against a few-KB note.
         if (this._history.length > 1000) this._history.shift();
         this._historyIdx = this._history.length - 1;
@@ -2114,7 +2903,7 @@ class SacMdEditor extends HTMLElement {
             this.dispatchEvent(new Event("input", { bubbles: true }));
         } finally {
             // Unflip after the synchronous event dispatch completes, so the
-            // input listener's _scheduleHistorySnapshot call (which runs
+            // input listener's _recordHistory call (which runs
             // during dispatch) sees _suppressHistory === true and bails out.
             // Without this defer, the restore would immediately queue a new
             // snapshot for the state we just restored, which would truncate
@@ -2225,6 +3014,7 @@ class SacMdEditor extends HTMLElement {
     _toggleBlockReveal(openLine) {
         const reveal = !openLine.classList.contains("block-revealed");
         openLine.classList.toggle("block-revealed", reveal);
+        openLine.querySelector(".sac-reveal-toggle")?.setAttribute("aria-pressed", String(reveal));
         if (openLine.dataset.block === "block-line") return;
         for (let cur = openLine.nextElementSibling; cur; cur = cur.nextElementSibling) {
             if (cur.dataset.block !== "block-body" && cur.dataset.block !== "block-close") break;
@@ -2248,6 +3038,34 @@ const BLOCK_PREFIX_RE = {
 // List item prefixes (CommonMark): bullets `-` `*` `+`; ordered `1.` or
 // `1)` with at most 9 digits. TASK_RE captures prefix, box state, gap, rest.
 const TASK_RE = /^(\s*(?:[-*+]|\d{1,9}[.)])\s+)\[([ xX])\](\s+)(.*)$/;
+// A list item's indent, marker and the gap after it.
+const LIST_ITEM_RE = /^(\s*)([-*+]|\d{1,9}[.)])([ \t]+)/;
+
+/** The marker a list, task or quote line hangs in front of its text (CSS
+ *  text-indent), or "". */
+function hangingMarker(src, type) {
+    if (type === "task") {
+        const m = TASK_RE.exec(src);
+        return m ? m[1] + "[" + m[2] + "]" + m[3] : "";
+    }
+    if (type === "ul" || type === "ol" || type === "quote") {
+        const m = BLOCK_PREFIX_RE[type].exec(src);
+        return m ? m[1] : "";
+    }
+    return "";
+}
+
+// Rough advance widths (em, the kit's Inter) of what markers are made of.
+// Only wrapped lines use them - the first line is laid out from the real
+// characters in both states, so the text never moves; an estimate off by a
+// pixel just shifts the second line of a long item by that pixel.
+const MARKER_EM = { " ": 0.27, "\t": 1.08, "-": 0.4, "*": 0.45, "+": 0.6, ".": 0.27, ")": 0.33,
+                    ">": 0.6, "[": 0.32, "]": 0.32, "x": 0.52, "X": 0.62 };
+function markerEm(s) {
+    let w = 0;
+    for (const c of s) w += MARKER_EM[c] ?? 0.6;      // digits
+    return Math.round(w * 100) / 100;
+}
 // Thematic break (CommonMark): up to 3 leading spaces, then 3 or more of
 // the same `-` `*` `_`, spaces and tabs allowed between them.
 const HR_RE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
@@ -2383,7 +3201,7 @@ function formatTable(texts) {
  *  a .tcell (CSS display: table-cell). The line itself is display:
  *  table-row, so consecutive rows form one anonymous table and the columns
  *  line up with no measuring. textContent stays the source. */
-function renderTableRow(src, kind, aligns, defs) {
+function renderTableRow(src, kind, aligns, ctx) {
     let col = 0;
     return splitTableRow(src).map((g) => {
         if (g.kind !== "cell") return `<span class="block-marker">${escapeHtml(g.text)}</span>`;
@@ -2391,7 +3209,7 @@ function renderTableRow(src, kind, aligns, defs) {
         if (kind === "table-delim") {
             return `<span class="tcell tdelim"><span class="block-marker">${escapeHtml(g.text)}</span></span>`;
         }
-        return `<span class="tcell ta-${a}">${renderInline(g.text, defs)}</span>`;
+        return `<span class="tcell ta-${a}">${renderInline(g.text, ctx)}</span>`;
     }).join("");
 }
 
@@ -2449,10 +3267,116 @@ function setBlockLabel(line, def) {
     else line.style.setProperty("--mdb-label", JSON.stringify(String(label)));
 }
 
+/** Any registry change - blocks, inlines, link schemes, strikethrough: new
+ *  CSS for every shadow root and every line re-derived. */
 function refreshBlocks() {
-    blockCss = [...BLOCKS.values()].map((d) => d.css).filter(Boolean).join("\n");
+    blockCss = [...BLOCKS.values(), ...INLINES.values()].map((d) => d.css).filter(Boolean).join("\n");
+    inlineExt = inlineExtensions();
     blockGen++;
     for (const editor of LIVE_EDITORS) editor._refreshBlocks();
+}
+
+// ---------------------------------------------------------------------------
+// Inline registry and host links (static API on the element class - see the
+// header). An inline is a host link form inside a line ([[Title]]); it
+// reaches marked's lexer as an inline extension, tried at every position
+// before marked's own rules, so a code span still wins where it starts first.
+// ---------------------------------------------------------------------------
+
+const INLINES = new Map();         // name -> compiled inline definition, in order
+let inlineExt = null;              // marked's `extensions` for INLINES, null when none
+let linkSchemes = [];              // host schemes allowed in hrefs ("note:", ...)
+
+function compileInline(def) {
+    if (!def || typeof def.name !== "string" || !/^[a-z][a-z0-9-]*$/.test(def.name)) {
+        throw new TypeError("sac-md-editor registerInline: name must be a-z, 0-9 and dashes");
+    }
+    if (!(def.match instanceof RegExp)) {
+        throw new TypeError(`sac-md-editor registerInline("${def.name}"): match must be a RegExp`);
+    }
+    if (typeof def.render !== "function") {
+        throw new TypeError(`sac-md-editor registerInline("${def.name}"): render must be a function`);
+    }
+    // Two copies of the pattern: sticky (a match starting exactly here, with
+    // group indices to find the shown text) and global (where the next one
+    // could start, so marked's text rule stops in front of it).
+    const flags = def.match.flags.replace(/[gyd]/g, "");
+    return {
+        name:   def.name,
+        at:     new RegExp(def.match.source, flags + "yd"),
+        next:   new RegExp(def.match.source, flags + "g"),
+        render: def.render,
+        css:    def.css ? String(def.css) : "",
+    };
+}
+
+function inlineExtensions() {
+    if (!INLINES.size) return null;
+    const defs = [...INLINES.values()];
+    return {
+        inline: defs.map((def) => function (src) {
+            // Never a link inside a link's own text.
+            if (this.lexer.state.inLink) return undefined;
+            def.at.lastIndex = 0;
+            const m = def.at.exec(src);
+            if (!m || !m[0]) return undefined;        // an empty match would never advance
+            let out;
+            try { out = def.render(m); } catch { return undefined; }   // foreign code
+            if (!out || typeof out !== "object") return undefined;
+            return { type: "sac-inline", raw: m[0], def, m, out };
+        }),
+        startInline: defs.map((def) => (src) => {
+            def.next.lastIndex = 0;
+            const m = def.next.exec(src);
+            return m ? m.index : undefined;
+        }),
+    };
+}
+
+// Never a host scheme: these run code or carry content of their own.
+const BANNED_SCHEMES = new Set(["javascript:", "vbscript:", "data:", "file:", "blob:"]);
+
+function compileSchemes(list) {
+    if (list == null) return [];
+    if (typeof list === "string" || typeof list[Symbol.iterator] !== "function") {
+        throw new TypeError("sac-md-editor linkSchemes: give an array of schemes, e.g. [\"note:\"]");
+    }
+    const out = new Set();
+    for (const s of list) {
+        let scheme = String(s).trim().toLowerCase();
+        if (!scheme.endsWith(":")) scheme += ":";
+        if (!/^[a-z][a-z0-9+.-]*:$/.test(scheme)) {
+            throw new TypeError(`sac-md-editor linkSchemes: "${s}" is not a URL scheme`);
+        }
+        if (BANNED_SCHEMES.has(scheme)) {
+            throw new TypeError(`sac-md-editor linkSchemes: "${scheme}" is never allowed`);
+        }
+        out.add(scheme);
+    }
+    return [...out];
+}
+
+/** A relative reference (../x.md, notes/a.md#why, ?q, /abs/path): resolved
+ *  against a stand-in base it stays on that base. The URL parser applies the
+ *  browser's own leniency (stripped controls, tabs inside a scheme), so a
+ *  disguised "java\tscript:" cannot pass for a path. */
+const REL_BASE = "https://sac-md-editor.invalid/";
+function isRelativeHref(href) {
+    if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return false;
+    try { return new URL(href, REL_BASE).origin === "https://sac-md-editor.invalid"; }
+    catch { return false; }
+}
+
+/** What an href may be: "web" (http(s), mailto, #fragment - opens in a new
+ *  tab as always), "host" (a scheme in linkSchemes, or a relative href in an
+ *  editor with links="host" - only the host can open it, through sac:link)
+ *  or "" (anything else - shown as a link, but not one). */
+function hrefKind(href, host) {
+    if (SAFE_HREF_RE.test(href)) return "web";
+    const lower = href.toLowerCase();
+    if (linkSchemes.some((s) => lower.startsWith(s))) return "host";
+    if (host && isRelativeHref(href)) return "host";
+    return "";
 }
 
 /** Cross-line state at the top of a document. `inFence` and `inBlock` (the
@@ -2630,31 +3554,154 @@ const PURIFY_CONFIG = {
     KEEP_CONTENT: true,
 };
 
+/** DOMPurify's own URI check, rebuilt from linkSchemes: its default list
+ *  knows no host scheme and would strip href="note:..." behind our back.
+ *  Same shape as DOMPurify's default (a scheme from the list, or no
+ *  scheme at all), but only the schemes hrefKind lets through. */
+function purifyConfigFor(schemes) {
+    const names = ["https?", "mailto", ...schemes.map((s) => s.slice(0, -1).replace(/[+.]/g, "\\$&"))];
+    return {
+        ...PURIFY_CONFIG,
+        ALLOWED_URI_REGEXP: new RegExp(`^(?:(?:${names.join("|")}):|[^a-z]|[a-z+.\\-]+(?:[^a-z+.\\-:]|$))`, "i"),
+    };
+}
+let purifyConfig = purifyConfigFor([]);
+
+// Editor.strikethrough: "gfm" (marked's rule: ~x~ and ~~x~~) or "double"
+// (~~x~~ only - cmark-gfm's DOUBLE_TILDE option). A lone ~ that does not
+// strike is left to marked's text rule, so it stays plain text.
+let strikethrough = "gfm";
+let DoubleTilde = null;
+/** A fresh tokenizer per render, like the options object: marked's Lexer
+ *  writes its options, rules and itself into the one it is given. */
+function doubleTildeTokenizer() {
+    if (!DoubleTilde) {
+        DoubleTilde = class extends marked.Tokenizer {
+            del(src) {
+                const t = super.del(src);
+                return t && t.raw.startsWith("~~") ? t : undefined;
+            }
+        };
+    }
+    return new DoubleTilde();
+}
+
+/** Line endings as the document keeps them: \r\n and a lone \r are \n
+ *  (CommonMark's line endings). The HTML parser would turn a \r inside a
+ *  line into \n anyway - one line would read back as two. */
+function normalizeEol(text) {
+    return text.replace(/\r\n?/g, "\n");
+}
+
 const SAFE_HREF_RE = /^(https?:|mailto:|#)/i;
 // Images: http/https only. Block data: URIs (SVG-XSS, canvas leaks),
 // javascript:, and anything else that could exfil or execute.
 const SAFE_IMG_SRC_RE = /^https?:/i;
 
-/** `defs`: the document's link reference definitions ({ label: { href,
- *  title } }), so [text][id], [text][] and [text] resolve. */
-function renderInline(text, defs = null) {
+// The walk below is synchronous and starts only in renderInline, which sets
+// this for its duration: does the editor let relative hrefs through
+// (links="host")?
+let walkHost = false;
+
+/** `ctx`: { defs, host } - the document's link reference definitions
+ *  ({ label: { href, title } }), so [text][id], [text][] and [text]
+ *  resolve, and whether the editor has links="host". */
+function renderInline(text, ctx = null) {
     if (!text) return "";
     // Graceful degradation if vendor scripts haven't loaded yet (e.g. in a
     // unit test harness that imports just the component file).
     if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
         return escapeHtml(text);
     }
+    const defs = ctx && ctx.defs;
+    // A fresh options object every time: marked's Lexer writes its
+    // tokenizer into the one it is given.
+    const options = { gfm: true, breaks: false };
+    if (inlineExt) options.extensions = inlineExt;
+    if (strikethrough === "double") options.tokenizer = doubleTildeTokenizer();
     let tokens;
     try {
         if (defs && Object.keys(defs).length) {
-            const lexer = new marked.Lexer({ gfm: true, breaks: false });
+            const lexer = new marked.Lexer(options);
             lexer.tokens.links = defs;
             tokens = lexer.inlineTokens(text);
         } else {
-            tokens = marked.Lexer.lexInline(text, { gfm: true, breaks: false });
+            tokens = marked.Lexer.lexInline(text, options);
         }
     } catch { return escapeHtml(text); }
-    return DOMPurify.sanitize(walkInlineTokens(tokens), PURIFY_CONFIG);
+    walkHost = !!(ctx && ctx.host);
+    return DOMPurify.sanitize(walkInlineTokens(tokens), purifyConfig);
+}
+
+/** The anchor the character at `offset` belongs to in a rendered line, or
+ *  null - its text, or one of its own markers ([ and ](url), [[ and ]]).
+ *  A caret position sits between two characters, so the one before it
+ *  counts too: a click on the right half of a link's last character. */
+function anchorAtOffset(root, offset) {
+    const owner = (node) => {
+        const el = node.parentElement;
+        if (!el) return null;
+        const a = el.closest("a");
+        if (a) return a;
+        if (el.classList.contains("link-open"))  return el.nextElementSibling?.matches("a") ? el.nextElementSibling : null;
+        if (el.classList.contains("link-close")) return el.previousElementSibling?.matches("a") ? el.previousElementSibling : null;
+        return null;
+    };
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let total = 0, before = null, node;
+    while ((node = walker.nextNode())) {
+        const end = total + node.length;
+        if (offset >= total && offset < end) return owner(node) || before;
+        if (offset === end) before = owner(node);
+        total = end;
+    }
+    return before;
+}
+
+/** A rendered link's whole source: the anchor and its own markers. */
+function linkRaw(a) {
+    const prev = a.previousElementSibling, next = a.nextElementSibling;
+    return (prev && prev.classList.contains("link-open") ? prev.textContent : "") +
+        a.textContent +
+        (next && next.classList.contains("link-close") ? next.textContent : "");
+}
+
+/** An anchor's attributes. A link whose href may not be followed (see
+ *  hrefKind) keeps its look but gets no href: no blank tab at "#". */
+function linkAttrs(href, title) {
+    const titleAttr = title ? ` title="${escapeAttr(title)}"` : "";
+    if (!hrefKind(href, walkHost)) return titleAttr;
+    return ` href="${escapeAttr(href)}"${titleAttr} target="_blank" rel="noopener noreferrer"`;
+}
+
+/** A registered inline: the part of the source the host shows becomes the
+ *  anchor, the rest is marker (link-open before, link-close after), so the
+ *  line's textContent stays the source. The shown text is found as a
+ *  capture group (the highest-numbered one equal to it), else as a
+ *  substring; text that is not in the source at all (a title for an id) is
+ *  generated content over the hidden source, like an entity. */
+function renderRegisteredInline(t) {
+    const { def, m, out } = t;
+    const raw  = m[0];
+    const text = out.text == null ? "" : String(out.text);
+    const href = out.href == null ? "" : String(out.href);
+    const extra = out.className ? " " + String(out.className).trim() : "";
+    const attrs = linkAttrs(href, out.title == null ? "" : String(out.title)) +
+        ` class="${escapeAttr("inline-" + def.name + extra)}"`;
+    let at = -1;
+    if (text) {
+        for (let g = m.length - 1; g >= 1 && at < 0; g--) {
+            if (m[g] === text && m.indices && m.indices[g]) at = m.indices[g][0] - m.index;
+        }
+        if (at < 0) at = raw.indexOf(text);
+    }
+    if (at < 0) {
+        return `<a${attrs} data-glyph="${escapeAttr(text)}"><span class="marker">${escapeHtml(raw)}</span></a>`;
+    }
+    const before = raw.substring(0, at), after = raw.substring(at + text.length);
+    return (before ? `<span class="marker link-open">${escapeHtml(before)}</span>` : "") +
+        `<a${attrs}>${escapeHtml(text)}</a>` +
+        (after ? `<span class="marker link-close">${escapeHtml(after)}</span>` : "");
 }
 
 // HTML entity: named, decimal or hex. Rendered as its character via CSS
@@ -2719,12 +3766,19 @@ function renderInlineToken(t) {
             const delim = t.raw.charAt(0); // "*" or "_"
             return `<span class="marker">${delim}</span><em>${walkInlineTokens(t.tokens || [])}</em><span class="marker">${delim}</span>`;
         }
-        case "del":
-            return `<span class="marker">~~</span><del>${walkInlineTokens(t.tokens || [])}</del><span class="marker">~~</span>`;
+        case "del": {
+            const delim = t.raw.startsWith("~~") ? "~~" : "~";   // GFM: one or two
+            return `<span class="marker">${delim}</span><del>${walkInlineTokens(t.tokens || [])}</del><span class="marker">${delim}</span>`;
+        }
         case "codespan": {
             const m = t.raw.match(/^(`+)/);
             const delim = m ? m[1] : "`";
-            return `<span class="marker">${delim}</span><code>${escapeHtml(t.text)}</code><span class="marker">${delim}</span>`;
+            // marked strips one space from each end of `` ` a ` `` (CommonMark);
+            // the source keeps them, so they join the markers.
+            const inner = t.raw.slice(delim.length, t.raw.length - delim.length);
+            const pad = inner.length - t.text.length === 2 ? " " : "";
+            const code = inner.slice(pad.length, inner.length - pad.length);
+            return `<span class="marker">${delim}${pad}</span><code>${escapeHtml(code)}</code><span class="marker">${pad}${delim}</span>`;
         }
         case "br":
             // Hard break — keep the raw source chars visible as a marker so
@@ -2732,11 +3786,10 @@ function renderInlineToken(t) {
             return `<span class="marker">${escapeHtml(t.raw.replace(/\n$/, ""))}</span><br>`;
         case "link": {
             const href = t.href || "";
-            const safe = SAFE_HREF_RE.test(href) ? href : "#";
             // Autolinks: <url>, <email>, or bare URL — one contiguous anchor,
             // no outer bracket markers.
             if (t.raw === href || t.raw === `<${href}>` || t.raw === `<${t.text}>`) {
-                return `<a href="${escapeAttr(safe)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.raw)}</a>`;
+                return `<a${linkAttrs(href, "")}>${escapeHtml(t.raw)}</a>`;
             }
             // Inline link [label](href) — preserve the `](...)` tail literally.
             // Reference link [label][id] / [label][] / [label]: the tail is
@@ -2749,9 +3802,12 @@ function renderInlineToken(t) {
                 : refIdx >= 0 ? t.raw.substring(refIdx)
                 : "]";
             if ("[" + t.text + tail !== t.raw) return escapeHtml(t.raw);
-            const titleAttr = t.title ? ` title="${escapeAttr(t.title)}"` : "";
-            return `<span class="marker">[</span><a href="${escapeAttr(safe)}"${titleAttr} target="_blank" rel="noopener noreferrer">${walkInlineTokens(t.tokens || [])}</a><span class="marker">${escapeHtml(tail)}</span>`;
+            // link-open / link-close: the anchor's own markers, so a click
+            // can tell the whole link's source (sac:link detail.raw).
+            return `<span class="marker link-open">[</span><a${linkAttrs(href, t.title)}>${walkInlineTokens(t.tokens || [])}</a><span class="marker link-close">${escapeHtml(tail)}</span>`;
         }
+        case "sac-inline":
+            return renderRegisteredInline(t);
         case "image": {
             // Preserve the raw source as a marker span (hidden on inactive
             // lines via the existing .line:not(.active) .marker rule), then
@@ -2811,13 +3867,46 @@ const TEMPLATE = `
         background: transparent;
         border-color: transparent;
     }
+    /* bare: the editor IS the pane (a notes app), not a field in a form -
+       a sheet of paper. No frame, and the writing surface fills the height
+       the host is given instead of the 60vh minimum, so the empty area
+       below a short note is still the editor. */
+    :host([bare]), :host([bare]:focus-within) {
+        display: flex;
+        flex-direction: column;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+    }
+    :host([bare]) .toolbar {
+        flex: none;
+        background: transparent;
+        border-radius: 0;
+    }
+    :host([bare]) .editor {
+        flex: 1 0 auto;
+        min-height: 0;
+    }
 
+    /* The toolbar stays in reach while a long note scrolls under it: sticky
+       at the top of whatever scrolls the page (a host with a header over
+       that sets ::part(toolbar) { top: ... }). At rest it looks as it
+       always did; stuck, it gets the kit's glass behind its buttons (a
+       scroll-state query; where that is not supported the blur alone keeps
+       them legible over the text passing beneath). */
     .toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        container-type: scroll-state;
         display: flex;
         gap: 2px;
         flex-wrap: wrap;
         padding: 8px 12px;
         background: color-mix(in srgb, var(--fg, #fff) 2%, transparent);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
         border-bottom: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
         border-radius: inherit;   /* the host's top corners - cannot drift */
         border-bottom-left-radius: 0;
@@ -2841,11 +3930,57 @@ const TEMPLATE = `
         justify-content: center;
         line-height: 1;
     }
-    .toolbar button:hover {
-        background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+    /* Hover looks only where a pointer hovers: a tap leaves :hover stuck
+       on the tapped button until the next tap elsewhere. */
+    @media (hover: hover) {
+        .toolbar button:hover {
+            background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+            color: var(--text, #fff);
+        }
+    }
+    /* Press (kit 2.33): feedback on pointer-down, not on release - a ghost
+       control steps its wash up to --hover-strong, fast in. */
+    .toolbar button:active,
+    .toolbar button.pressed {
+        background: var(--hover-strong, color-mix(in srgb, var(--fg, #fff) 14%, transparent));
         color: var(--text, #fff);
+        transition-duration: 0.1s;
+    }
+    .toolbar::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        border-radius: inherit;
+        pointer-events: none;
+    }
+    @container scroll-state(stuck: top) {
+        .toolbar::before { background: var(--glass-strong, #161b26); }
+    }
+    .toolbar button:focus-visible {
+        outline: 2px solid var(--accent, #3b82f6);
+        outline-offset: 1px;
     }
     .toolbar button b, .toolbar button i { font-size: 13px; }
+    /* Fingers: 44px targets (a fingertip, not a pointer tip), in one row
+       that scrolls sideways - wrapped, the toolbar would take a third of a
+       phone screen before the text starts. */
+    @media (pointer: coarse) {
+        .toolbar {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overscroll-behavior-x: contain;
+            scrollbar-width: none;
+            padding: 2px 8px;
+        }
+        .toolbar::-webkit-scrollbar { display: none; }
+        .toolbar button {
+            flex: none;
+            min-width: 44px;
+            height: 44px;
+            font-size: 13px;
+        }
+    }
     .toolbar .sep {
         width: 1px;
         height: 20px;
@@ -2925,15 +4060,18 @@ const TEMPLATE = `
 
     /* Headings jump to size live as soon as a heading prefix is typed.
        When inactive, the hash prefix is fully hidden - the font size alone
-       signals the heading (Obsidian's approach). */
+       signals the heading (Obsidian's approach). Tracking follows size,
+       as the kit's own h1-h6: display sizes tighten, h4-h6 sit near body
+       size and keep the face's own spacing. */
     .line.heading {
         font-family: 'Outfit', sans-serif;
         font-weight: 700;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.02em;
         line-height: 1.25;
         margin-top: 0.6em;
         margin-bottom: 0.2em;
     }
+    .line.h4, .line.h5, .line.h6 { letter-spacing: 0; }
     .line.h1 { font-size: 1.85em; }
     .line.h2 { font-size: 1.4em; }
     .line.h3 { font-size: 1.15em; }
@@ -2942,50 +4080,59 @@ const TEMPLATE = `
     .line.h6 { font-size: 0.88em; color: var(--text-muted, #888); }
     .line.heading:not(.active) .block-marker { display: none; }
 
-    /* Blockquote. A continuous left bar across a run of quote lines, plus
-       a very soft tint. No per-line rounded corners - they break up the
-       block visually when you stack multiple lines. The left bar sits at
-       the inside edge of the line's negative margin so it reads flush
-       with the gutter instead of hanging inside the padding. The angle-
-       bracket marker is hidden when inactive; the left bar is the cue. */
+    /* Blockquote. A continuous soft tint across a run of quote lines,
+       pulled out into the gutter by the negative margin. No colored left
+       stripe (kit rule: never a >=2px colored border on a rounded
+       surface) and no per-line rounded corners - they break up the block
+       visually when you stack multiple lines. The angle-bracket marker is
+       hidden when inactive; the tint plus the muted italic are the cue.
+       padding-left keeps the text where the old 3px stripe left it. */
     .line.quote {
-        background: color-mix(in srgb, var(--fg, #fff) 2.5%, transparent);
-        padding-left: 18px;
+        background: color-mix(in srgb, var(--fg, #fff) 6%, transparent);
+        padding-left: 21px;
         margin: 0 -10px;
-        border-left: 3px solid color-mix(in srgb, var(--fg, #fff) 28%, transparent);
         border-radius: 0;
         color: var(--text-muted, #bbb);
         font-style: italic;
     }
-    .line.quote:not(.active) .block-marker { display: none; }
 
-    /* Unordered lists: hide the raw dash marker when inactive, paint a
-       real bullet in its place via ::before. When the line becomes
-       active we drop the extra indent entirely so the raw "- foo" sits
-       at the normal left margin - matches how Obsidian collapses list
-       indentation back to the gutter in edit mode. */
-    .line.list.ul:not(.active) { padding-left: 28px; }
-    .line.list.ul:not(.active) .block-marker { display: none; }
-    .line.list.ul:not(.active)::before {
+    /* Lists, tasks and quotes hang their marker in front of the text, on
+       the caret line and off it alike: the marker's characters stay in the
+       flow in both states (invisible when rendered, a bullet or a box
+       drawn over them), so the text never moves when the caret comes or
+       goes - a click lands on the word it was aimed at. --mk is the
+       marker's width (_applyBlockClass); wrapped lines line up under the
+       text. Indented (nested) items show their indent. */
+    .line.list, .line.task { padding-left: calc(18px + var(--mk, 0px)); }
+    .line.list, .line.task, .line.quote { text-indent: calc(-1 * var(--mk, 0px)); }
+    .line.list:not(.active) .block-marker,
+    .line.task:not(.active) .block-marker,
+    .line.quote:not(.active) .block-marker { color: transparent; opacity: 1; }
+    /* Ordered lists: the number is the marker, and it shows. */
+    .line.list.ol:not(.active) .block-marker {
+        color: var(--text-muted, #888);
+        opacity: 0.75;
+    }
+    /* Bullets: a dot drawn where the source's own -, * or + starts (a
+       zero-width box on its left edge, the dot centred on it), a little
+       ahead of the text as a bullet sits. */
+    .line.list.ul:not(.active) .list-bullet { position: relative; }
+    .line.list.ul:not(.active) .list-bullet::before {
         content: "\\2022";
         position: absolute;
-        left: 10px;
-        top: 1px;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        text-indent: 0;
         color: var(--text-muted, #888);
         opacity: 0.6;
         pointer-events: none;
     }
-
-    /* Ordered lists: keep the number visible. */
-    .line.list.ol:not(.active) .block-marker {
-        color: var(--text-muted, #888);
-        opacity: 0.75;
-        margin-right: 2px;
-    }
-
-    /* Task lists: hide the dash prefix (the rendered checkbox is the
-       structural cue). Same rule as ul - indent only when inactive. */
-    .line.task:not(.active) .block-marker { display: none; }
 
     /* Horizontal rule. Markers stay in textContent (save/load round-trip),
        but visually the line collapses to a thin horizontal border.
@@ -3115,15 +4262,23 @@ const TEMPLATE = `
     }
 
     /* Setext underline (=== / --- under paragraph text): the paragraph
-       renders as the heading, the underline collapses to a sliver. */
-    .line.setext-underline:not(.active) {
+       renders as the heading, the underline collapses to a sliver - but
+       not while the caret is in that heading. The underline is half the
+       heading's source, and ArrowDown skips a 4px line, so collapsed it
+       could not be reached to edit. "That heading": an active
+       .setext-heading line before it with only heading lines between. */
+    .line.setext-underline:not(.active):is(:not(.setext-heading.active ~ *),
+                                           .setext-heading.active ~ :not(.setext-heading) ~ *) {
         min-height: 0;
         height: 4px;
         padding: 0;
         overflow: hidden;
     }
-    .line.setext-underline:not(.active) .block-marker { display: none; }
-    .line.setext-underline.active { color: var(--text-muted, #888); }
+    .line.setext-underline:not(.active):is(:not(.setext-heading.active ~ *),
+                                           .setext-heading.active ~ :not(.setext-heading) ~ *) .block-marker {
+        display: none;
+    }
+    .line.setext-underline { color: var(--text-muted, #888); }
 
     /* Link reference definition ([id]: url): metadata, not prose. */
     .line.linkdef {
@@ -3161,6 +4316,10 @@ const TEMPLATE = `
         color: var(--accent, #3b82f6);
         background: color-mix(in srgb, var(--accent, #3b82f6) 14%, transparent);
     }
+    .toolbar button.ctx:active,
+    .toolbar button.ctx.pressed {
+        background: color-mix(in srgb, var(--accent, #3b82f6) 24%, transparent);
+    }
 
     /* Table dialog (native <dialog>, top layer). */
     .tdlg {
@@ -3173,6 +4332,27 @@ const TEMPLATE = `
         box-shadow: 0 16px 48px color-mix(in srgb, var(--sink, #000) 45%, transparent);
     }
     .tdlg::backdrop { background: color-mix(in srgb, var(--sink, #000) 45%, transparent); }
+    /* In and out the way a kit dialog goes (2.33): it pops in from 96%,
+       and on close shrinks and fades back the same path. The exit needs
+       overlay (Chromium) to stay in the top layer while it plays; without
+       it the dialog closes at once rather than fade out in the flow. A
+       closing dialog takes no pointer: the editor is live again. */
+    .tdlg[open] { animation: tdlg-in 150ms ease-out; }
+    .tdlg[open]::backdrop { animation: tdlg-fade 150ms ease-out; }
+    @keyframes tdlg-in { from { opacity: 0; transform: scale(0.96); } }
+    @keyframes tdlg-fade { from { opacity: 0; } }
+    @supports (overlay: auto) {
+        .tdlg, .tdlg::backdrop {
+            transition: opacity 150ms ease-in, transform 150ms ease-in,
+                        overlay 150ms allow-discrete, display 150ms allow-discrete;
+        }
+        .tdlg:not([open]) { opacity: 0; transform: scale(0.96); pointer-events: none; }
+        .tdlg:not([open])::backdrop { opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .tdlg[open], .tdlg[open]::backdrop { animation-duration: 1ms; }
+        .tdlg, .tdlg::backdrop { transition-duration: 1ms; }
+    }
     .tdlg form {
         display: flex;
         flex-direction: column;
@@ -3183,6 +4363,28 @@ const TEMPLATE = `
     }
     .tdlg-title { font-weight: 700; }
     .tdlg-scroll { overflow: auto; min-height: 0; }
+    /* The kit's scrollbar (ui.css section 5) re-stated with its tokens:
+       ::-webkit-scrollbar does not pierce a shadow root. Firefox, which
+       has no ::-webkit-scrollbar, gets the standard pair instead. */
+    .tdlg-scroll::-webkit-scrollbar { width: var(--scrollbar-size, 12px); height: var(--scrollbar-size, 12px); }
+    .tdlg-scroll::-webkit-scrollbar-track { background: transparent; }
+    .tdlg-scroll::-webkit-scrollbar-thumb {
+        background: var(--scrollbar-thumb, color-mix(in srgb, var(--fg, #fff) 18%, transparent));
+        background-clip: content-box;
+        border: var(--scrollbar-gap, 3px) solid transparent;
+        border-radius: 999px;
+    }
+    .tdlg-scroll::-webkit-scrollbar-thumb:hover {
+        background: var(--scrollbar-thumb-hover, color-mix(in srgb, var(--fg, #fff) 32%, transparent));
+        background-clip: content-box;
+    }
+    .tdlg-scroll::-webkit-scrollbar-corner { background: transparent; }
+    @supports not selector(::-webkit-scrollbar) {
+        .tdlg-scroll {
+            scrollbar-width: thin;
+            scrollbar-color: var(--scrollbar-thumb, color-mix(in srgb, var(--fg, #fff) 18%, transparent)) transparent;
+        }
+    }
     .tdlg-grid { border-collapse: collapse; }
     .tdlg-grid th, .tdlg-grid td { padding: 2px; vertical-align: middle; }
     .tdlg-ctl { display: flex; gap: 1px; justify-content: center; align-items: center; }
@@ -3214,9 +4416,17 @@ const TEMPLATE = `
         color: var(--text-muted, #888);
         border-radius: var(--radius-m, 4px);
         cursor: pointer;
+        transition: background-color 0.12s, color 0.12s;
     }
     .tdlg-ic svg { width: 14px; height: 14px; display: block; }
-    .tdlg-ic:hover:not(:disabled) { background: var(--hover, color-mix(in srgb, var(--fg, #fff) 8%, transparent)); color: var(--text, #fff); }
+    @media (hover: hover) {
+        .tdlg-ic:hover:not(:disabled) { background: var(--hover, color-mix(in srgb, var(--fg, #fff) 8%, transparent)); color: var(--text, #fff); }
+    }
+    .tdlg-ic:active:not(:disabled) {
+        background: var(--hover-strong, color-mix(in srgb, var(--fg, #fff) 14%, transparent));
+        color: var(--text, #fff);
+        transition-duration: 0.1s;
+    }
     .tdlg-ic:disabled { opacity: 0.3; cursor: default; }
     .tdlg-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .tdlg-gap { flex: 1; }
@@ -3231,8 +4441,13 @@ const TEMPLATE = `
         border: 1px solid var(--border, color-mix(in srgb, var(--fg, #fff) 8%, transparent));
         border-radius: var(--radius-m, 4px);
         cursor: pointer;
+        transition: background-color 0.12s, transform 0.2s var(--ease-smooth, ease);
     }
-    .tdlg-btn:hover { background: var(--hover, color-mix(in srgb, var(--fg, #fff) 8%, transparent)); }
+    @media (hover: hover) {
+        .tdlg-btn:hover { background: var(--hover, color-mix(in srgb, var(--fg, #fff) 8%, transparent)); }
+    }
+    /* A boxed button gives under the pointer the moment it goes down. */
+    .tdlg-btn:active { transform: scale(0.97); transition-duration: 0.1s; }
     .tdlg-btn.primary {
         color: var(--on-accent, #fff);
         background: var(--accent-fill, var(--accent, #3b82f6));
@@ -3246,6 +4461,9 @@ const TEMPLATE = `
     /* HTML entity (&copy;): the source stays in the DOM as a marker
        (hidden on inactive lines), the character is generated content. */
     .line:not(.active) .entity::before { content: attr(data-glyph); }
+    /* A registered inline whose shown text is not in its source (a title
+       for an id): the same trick - hidden source, generated text. */
+    .line:not(.active) a[data-glyph]::before { content: attr(data-glyph); }
 
     /* Active fence marker (user is editing the fence boundary line):
        dim the raw markers so they read as syntax, keep the card bg. */
@@ -3272,17 +4490,20 @@ const TEMPLATE = `
        colour (--mdb-color on the line, warm by default) across the opening
        line, the body lines and the closing line, so a multi-line block
        reads as one shape. When a boundary line goes active the card stays
-       and its raw marker chars come back (like a fence). */
+       and its raw marker chars come back (like a fence). The tint alone
+       draws the card - no colored left stripe (kit rule: never a >=2px
+       colored border on a rounded surface); the label pill and the
+       boundary text carry the colour. padding-left keeps the text where
+       the old 3px stripe left it. */
     .line.block-open,
     .line.block-close,
     .line.block-body,
     .line.block-line {
         --mdb-c: var(--mdb-color, var(--accent-warm, #f59e0b));
-        background: color-mix(in srgb, var(--mdb-c) 4.5%, transparent);
+        background: color-mix(in srgb, var(--mdb-c) 7%, transparent);
         margin: 0 -10px;
-        padding-left: 14px;
+        padding-left: 17px;
         padding-right: 14px;
-        border-left: 3px solid color-mix(in srgb, var(--mdb-c) 35%, transparent);
         border-radius: 0;
     }
     .line.block-open,
@@ -3384,62 +4605,103 @@ const TEMPLATE = `
         display: block;
     }
     .sac-reveal-toggle .sac-eye-slash { visibility: hidden; }
-    .sac-reveal-toggle:hover {
+    @media (hover: hover) {
+        .sac-reveal-toggle:hover {
+            opacity: 1;
+            background: color-mix(in srgb, var(--mdb-c) 14%, transparent);
+        }
+    }
+    .sac-reveal-toggle:active,
+    .sac-reveal-toggle.pressed {
         opacity: 1;
-        background: color-mix(in srgb, var(--mdb-c) 14%, transparent);
+        background: color-mix(in srgb, var(--mdb-c) 24%, transparent);
+        transition-duration: 0.1s;
     }
     /* Revealed state: surface the slash through the eye. */
     .line.block-revealed .sac-reveal-toggle { opacity: 0.95; }
     .line.block-revealed .sac-reveal-toggle .sac-eye-slash { visibility: visible; }
+    /* Read-only, the eye is a tab stop: show where the focus is. */
+    .sac-reveal-toggle:focus-visible {
+        opacity: 1;
+        outline: 2px solid var(--mdb-c, var(--accent, #3b82f6));
+        outline-offset: 1px;
+    }
 
-    /* Task list: render [ ] / [x] as a visual checkbox while inactive. The
-       bracket characters stay in textContent (font-size: 0 hides them
-       visually) so save/load round-trips unchanged. */
-    .line.task:not(.active) { padding-left: 28px; }
-    .line.task .task-box {
-        display: inline-block;
-        width: 14px;
-        height: 14px;
-        /* middle, not a pixel offset: the box's own text is font-size 0,
-           so its baseline sits at the TOP of the box and any baseline
-           offset hangs the whole box below the text line. */
-        vertical-align: middle;
-        border: 1.5px solid var(--border, color-mix(in srgb, var(--fg, #fff) 30%, transparent));
-        border-radius: var(--radius-s, 2px);
+    /* "Open" under the caret while it is in a link (_syncLinkButton). */
+    .link-open-btn {
+        position: absolute;
+        z-index: 3;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.2;
+        color: var(--accent, #3b82f6);
+        background: var(--glass-strong, var(--panel, #161b26));
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--border-strong, color-mix(in srgb, var(--fg, #fff) 16%, transparent));
+        border-radius: var(--radius-m, 4px);
+        box-shadow: 0 4px 12px color-mix(in srgb, var(--sink, #000) 25%, transparent);
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .link-open-btn[hidden] { display: none; }
+    .link-open-btn svg { width: 12px; height: 12px; display: block; }
+    @media (hover: hover) {
+        .link-open-btn:hover { background: var(--panel, #161b26); }
+    }
+    .link-open-btn:active,
+    .link-open-btn.pressed {
+        background: color-mix(in srgb, var(--accent, #3b82f6) 18%, var(--panel, #161b26));
+        transition-duration: 0.1s;
+    }
+    @media (pointer: coarse) {
+        .link-open-btn { min-height: 44px; padding: 0 16px; font-size: 14px; }
+    }
+
+    /* Task list: [ ] / [x] drawn as a checkbox while inactive. The bracket
+       characters stay in textContent and in the flow (transparent), the
+       box is drawn over them - so the text sits where it does on the caret
+       line, and save/load round-trips unchanged. While editing the box is
+       a checkbox: a click or tap ticks it (_toggleTask). */
+    .line.task:not(.active) .task-box {
         position: relative;
         color: transparent;
-        font-size: 0;
-        cursor: default;
     }
-    .line.task.active .task-box {
-        /* Active = raw mode; don't render a fake box, show the text. */
-        display: inline;
-        width: auto;
-        height: auto;
-        border: none;
-        color: inherit;
-        font-size: inherit;
-        vertical-align: baseline;
+    .line.task:not(.active) .task-box::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 14px;
+        height: 14px;
+        box-sizing: border-box;
+        transform: translate(-50%, -50%);
+        border: 1.5px solid var(--border, color-mix(in srgb, var(--fg, #fff) 30%, transparent));
+        border-radius: var(--radius-s, 2px);
     }
-    /* The hidden gap marker leaves the box touching the text. */
-    .line.task:not(.active) .task-box { margin-right: 6px; }
-    .line.task .task-box.checked {
+    .line.task:not(.active) .task-box.checked::before {
         background: var(--accent, #3b82f6);
         border-color: var(--accent, #3b82f6);
     }
-    .line.task .task-box.checked::after {
+    .line.task:not(.active) .task-box.checked::after {
         content: "\\2713";
         position: absolute;
         left: 50%;
         top: 50%;
         transform: translate(-50%, -54%);
+        text-indent: 0;
         color: var(--on-accent, #fff);
         font-size: 11px;
         line-height: 1;
         font-weight: 700;
     }
-    .line.task.active .task-box.checked::after { content: none; }
-    .line.task.task-done:not(.active) {
+    :host(:not(.is-readonly)) .line.task:not(.active) .task-box { cursor: pointer; }
+    .line.task.task-done:not(.active) .task-text {
         text-decoration: line-through;
         color: var(--text-muted, #888);
     }
@@ -3477,7 +4739,7 @@ const TEMPLATE = `
     /* Active line flattens innerHTML to plain text — no <img> rendered then.
        That's the desired editing state. */
 </style>
-<div class="toolbar" part="toolbar">
+<div class="toolbar" part="toolbar" role="toolbar" data-no-swipe>
     <button type="button" data-fmt="bold"   title="Bold (Ctrl+B)"><b>B</b></button>
     <button type="button" data-fmt="italic" title="Italic (Ctrl+I)"><i>I</i></button>
     <button type="button" data-fmt="strike" title="Strikethrough"><span style="text-decoration: line-through;">S</span></button>
@@ -3492,10 +4754,12 @@ const TEMPLATE = `
     <button type="button" data-fmt="ul"     title="Bullet list">List</button>
     <button type="button" data-fmt="ol"     title="Numbered list">1. List</button>
     <button type="button" data-fmt="quote"  title="Blockquote">Quote</button>
-    <button type="button" data-fmt="hr"     title="Horizontal rule">HR</button>
+    <button type="button" data-fmt="hr"     title="Insert a divider line">Divider</button>
     <button type="button" data-fmt="table"  title="Table">Table</button>
 </div>
 <div class="editor" part="editor" contenteditable="plaintext-only" spellcheck="true"></div>
+<div id="kbd-hint" hidden></div>
+<button type="button" class="link-open-btn" tabindex="-1" hidden></button>
 `;
 
 customElements.define("sac-md-editor", SacMdEditor);

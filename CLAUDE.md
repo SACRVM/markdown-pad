@@ -36,10 +36,15 @@ does not load) against `sac.app.base()`, once, guarded by
 `customElements.get` — the file declares top-level classes and would throw if
 loaded twice.
 
-The editor still fires native `input` and an undocumented `history-change`
-event (`detail: { canUndo, canRedo }`) and has public `undo()` / `redo()`.
-When sac-md-editor moves to the kit's `sac:input` / `sac:change` events
-(its roadmap item 2), the listeners in `app.js` must follow.
+The app's Undo / Redo buttons use the editor's public history API (since
+v1.1.0): `undo()` / `redo()` / `canUndo()` / `canRedo()` and the
+`history-change` event (`detail: { canUndo, canRedo }`). The editor still
+fires the native `input` alongside the kit's `sac:input` / `sac:change`;
+when sac-md-editor drops the native ones (its roadmap item 2), the
+listeners in `app.js` must follow.
+
+Pin the editor to a release tag (`vX.Y.Z`) and name it in the re-vendor
+commit.
 
 ## Non-negotiable
 
