@@ -59,8 +59,11 @@ shoulder. The text is saved to the file as plain text, like everything else.
 ## Develop
 
 ```bash
-npx serve .        # http://localhost:3000, F5 is the whole dev loop
+python3 -m http.server 3330    # http://localhost:3330/, F5 is the whole dev loop
 ```
+
+(`npx serve . -l 3330` works too. In Firepit, *Run site* starts the same
+server and *Open app* opens it.)
 
 `index.html` stands in for a desktop. It carries the theme and language
 switches that a desktop normally provides.
