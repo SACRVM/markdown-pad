@@ -209,7 +209,10 @@
             on(".mp-redo",    () => this._editor.redo());
             on(".mp-about",   () => this._about());
 
-            this._editor.addEventListener("input", () => this._changed());
+            // The kit's value event: once per edit (typing, paste, toolbar,
+            // undo/redo), never on a programmatic value set - unlike the
+            // native input, which the editor still fires twice per keystroke.
+            this._editor.addEventListener("sac:input", () => this._changed());
             this._editor.addEventListener("history-change", (e) => {
                 this.$(".mp-undo").disabled = !e.detail.canUndo;
                 this.$(".mp-redo").disabled = !e.detail.canRedo;

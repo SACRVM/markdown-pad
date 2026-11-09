@@ -38,10 +38,11 @@ loaded twice.
 
 The app's Undo / Redo buttons use the editor's public history API (since
 v1.1.0): `undo()` / `redo()` / `canUndo()` / `canRedo()` and the
-`history-change` event (`detail: { canUndo, canRedo }`). The editor still
-fires the native `input` alongside the kit's `sac:input` / `sac:change`;
-when sac-md-editor drops the native ones (its roadmap item 2), the
-listeners in `app.js` must follow.
+`history-change` event (`detail: { canUndo, canRedo }`). Edits arrive as
+the kit's `sac:input` (`detail: { value }`, once per edit, never on a
+programmatic `value` set). The editor still fires the native `input` for
+older consumers until its roadmap item 2 drops it; the app no longer
+listens to it.
 
 Pin the editor to a release tag (`vX.Y.Z`) and name it in the re-vendor
 commit.
