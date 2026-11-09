@@ -10,6 +10,12 @@ app-markdown-pad {
     gap: 0.5rem;
     height: 100%;
     min-height: 0;
+    /* As a flex item (the harness frame, or any host that lays the app out
+       in a flex row) the app would otherwise be at least as wide as its
+       widest content - on touch that is the editor's toolbar, one row that
+       scrolls sideways (sac-md-editor 1.1), and the whole app would grow
+       past a phone's screen. */
+    min-width: 0;
 }
 
 /* ---------------------------------------------------------- toolbar -- */
